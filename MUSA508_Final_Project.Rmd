@@ -14,6 +14,7 @@ library(riem)
 library(gridExtra)
 library(knitr)
 library(kableExtra)
+library(RSocrata)
 
 plotTheme <- theme(
   plot.title =element_text(size=12),
@@ -53,10 +54,45 @@ palette4 <- c("#D2FBD4","#92BCAB","#527D82","#123F5A")
 palette2 <- c("#6baed6","#08519c")
 ```
 
-```{r}
+```{r load_data}
+# Read in the data with RSocrata package
+inspections <- read.socrata(
+  "https://data.cityofchicago.org/resource/4ijn-s7e5.json",
+  app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
+  email     = "willi2eh@upenn.edu",
+  password  = "Triscuit3!"
+)
 
-df <- st_read("https://data.cityofchicago.org/resource/4ijn-s7e5.geojson")
+# Convert to sf object
+# Filter for only restaurants that are in business
+inspections <- st_as_sf(inspections, coords = c("latitude", "longitude"), 
+                 crs = 4326, agr = "constant", na.fail=FALSE) %>%
+   st_transform('ESRI:102271') %>%
+  filter(results != "Out of Business") %>%
+  filter(results != "Not Ready") %>%
+  filter(facility_type == "Restaurant")
 
 ```
 
+```{r feature_engineering}
+
+# results_numeric
+# Outcome variable recoded to numeric binary variable: Fail inspection = 1 & Pass inspection = 0
+# If no entry, but violation -> fail
+# If no entry, but no violations -> pass
+# If pass with conditions -> pass
+
+inspections <- inspections %>%
+  mutate(results_numeric = ifelse(inspections$results == "Fail", 1, ifelse(((inspections$results == "No Entry")&(!is.na(inspections$violations))), 1, 0)))
+
+# violations_count
+# This code counts the number of times the character | is used (this separates the violations) and adds 1 (because there isn't one in front of the first)
+library(stringr)
+inspections <- inspections %>%
+  mutate(violations_count = str_count(inspections$violations, coll("| "))) 
+inspections <- inspections %>%
+  mutate(violations_count = ifelse(!is.na(inspections$violations_count), inspections$violations_count + 1, 0))
+
+
+```
 
