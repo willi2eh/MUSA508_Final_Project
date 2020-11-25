@@ -3,6 +3,7 @@ title: "MUSA508_Final_Project"
 output: html_document
 ---
 
+# Setup
 ```{r setup_13, cache=TRUE, message=FALSE}
 library(tidyverse)
 library(sf)
@@ -54,6 +55,11 @@ palette4 <- c("#D2FBD4","#92BCAB","#527D82","#123F5A")
 palette2 <- c("#6baed6","#08519c")
 ```
 
+```{r load_api_key, message = FALSE}
+# Load API key
+census_api_key("d8b938a81d19a2811d021f339295fbf6135f7d36", overwrite = TRUE)
+```
+
 ```{r load_data}
 # Read in the data with RSocrata package
 inspections <- read.socrata(
@@ -74,7 +80,7 @@ inspections <- st_as_sf(inspections, coords = c("latitude", "longitude"),
 
 ```
 
-```{r feature_engineering}
+```{r feature_engineering, warning=FALSE}
 
 # results_numeric
 # Outcome variable recoded to numeric binary variable: Fail inspection = 1 & Pass inspection = 0
@@ -93,6 +99,87 @@ inspections <- inspections %>%
 inspections <- inspections %>%
   mutate(violations_count = ifelse(!is.na(inspections$violations_count), inspections$violations_count + 1, 0))
 
+# Time bins - week & day of the week
+inspections <- inspections %>%
+  mutate(week = week(inspection_date),
+         dotw = wday(inspection_date, label=TRUE))
+
 
 ```
 
+```{r get_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
+## change year???
+chicagoCensus <- 
+  get_acs(geography = "tract", 
+          variables = c("B01003_001", "B19013_001", 
+                        "B02001_002", "B08013_001",
+                        "B08012_001", "B08301_001", 
+                        "B08301_010", "B01002_001"), 
+          year = 2017, 
+          state = "IL", 
+          geometry = TRUE, 
+          county=c("Cook"),
+          output = "wide") %>%
+  rename(Total_Pop =  B01003_001E,
+         Med_Inc = B19013_001E,
+         Med_Age = B01002_001E,
+         White_Pop = B02001_002E,
+         Travel_Time = B08013_001E,
+         Num_Commuters = B08012_001E,
+         Means_of_Transport = B08301_001E,
+         Total_Public_Trans = B08301_010E) %>%
+  select(Total_Pop, Med_Inc, White_Pop, Travel_Time,
+         Means_of_Transport, Total_Public_Trans,
+         Med_Age,
+         GEOID, geometry) %>%
+  mutate(Percent_White = White_Pop / Total_Pop,
+         Mean_Commute_Time = Travel_Time / Total_Public_Trans,
+         Percent_Taking_Public_Trans = Total_Public_Trans / Means_of_Transport)
+
+```
+
+```{r extract_geometries, cache = TRUE}
+chicagoTracts <- 
+  chicagoCensus %>%
+  as.data.frame() %>%
+  distinct(GEOID, .keep_all = TRUE) %>%
+  select(GEOID, geometry) %>% 
+  st_sf 
+
+inspections <- inspections %>% st_transform(4326) 
+
+```
+
+```{r add_census_tracts, cache = TRUE, message = FALSE, warning = FALSE}
+dat_census <- st_join(inspections %>% 
+          filter(is.na(location.latitude) == FALSE &
+                   is.na(location.longitude) == FALSE) %>%
+          st_as_sf(., coords = c("location.longitude", "location.latitude"), crs = 4326),
+        chicagoTracts %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) %>%
+  rename(Origin.Tract = GEOID) %>%
+  mutate(location.longitude = unlist(map(geometry, 1)),
+         location.latitude = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry)
+ 
+```
+
+```{r import_weather, message = FALSE, warning = FALSE, cache = TRUE}
+weather.Panel <- 
+  riem_measures(station = "ORD", date_start = "2010-01-04", date_end = "2013-05-31") %>%
+  dplyr::select(valid, tmpf, p01i, sknt)%>%
+  replace(is.na(.), 0) %>%
+    mutate(inspection_date = as.Date(ymd_h(substr(valid,1,13)))) %>%
+    mutate(week = week(inspection_date),
+           dotw = wday(inspection_date, label=TRUE)) %>%
+    group_by(inspection_date) %>%
+    summarize(Temperature = max(tmpf),
+              Precipitation = sum(p01i),
+              Wind_Speed = max(sknt)) %>%
+    mutate(Temperature = ifelse(Temperature == 0, 42, Temperature))
+
+glimpse(weather.Panel)
+```
