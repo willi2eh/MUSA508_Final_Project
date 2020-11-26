@@ -104,6 +104,39 @@ inspections <- inspections %>%
   mutate(week = week(inspection_date),
          dotw = wday(inspection_date, label=TRUE))
 
+# Create feature for # of previous inspections
+inspections <- inspections %>%
+  arrange(inspection_date) %>%
+   group_by(dba_name) %>%
+   mutate(inspectionCount = row_number() - 1L) %>%
+   ungroup()
+
+# Create feature for how many previous inspections they have failed
+# https://stackoverflow.com/questions/43957453/r-increasing-variable-based-on-previous-occurrences 
+inspections <- inspections %>%
+  arrange(dba_name, inspection_date) %>%
+  group_by(dba_name) %>%
+  mutate(total_inspect = 1:n()) %>%
+  # Create a column showing fail_result, fail is 1, pass is 0
+  mutate(fail_result = ifelse(results == "Fail", 1, 0)) %>%
+  # Calculate the cumulative sum of fail_result
+  mutate(failed_inspect = cumsum(fail_result)) %>%
+  # Remove fail_result
+  select(-fail_result) %>%
+  # Sort the data frame by Date
+  arrange(inspection_date)
+
+inspections <- inspections %>%
+  mutate(past_inspect = ifelse(total_inspect == 0, 0, total_inspect - 1)) %>%
+  mutate(past_failed_inspect = ifelse(results == "Fail" & failed_inspect != 0, 
+                                      failed_inspect - 1,
+                                      failed_inspect)) %>%
+  select(-total_inspect, -failed_inspect)
+
+# Subset for inspections in 2017 
+# We will estimate a model using inspection data from 2017 to predict for 2018
+inspections17 <- inspections %>%
+   dplyr::filter((inspection_date > as.POSIXct("2017-01-01")) & (inspection_date < as.POSIXct("2018-01-01")))
 
 ```
 
@@ -151,7 +184,7 @@ inspections <- inspections %>% st_transform(4326)
 ```
 
 ```{r add_census_tracts, cache = TRUE, message = FALSE, warning = FALSE}
-dat_census <- st_join(inspections %>% 
+dat_census <- st_join(inspections17 %>% 
           filter(is.na(location.latitude) == FALSE &
                    is.na(location.longitude) == FALSE) %>%
           st_as_sf(., coords = c("location.longitude", "location.latitude"), crs = 4326),
@@ -169,7 +202,7 @@ dat_census <- st_join(inspections %>%
 
 ```{r import_weather, message = FALSE, warning = FALSE, cache = TRUE}
 weather.Panel <- 
-  riem_measures(station = "ORD", date_start = "2010-01-04", date_end = "2013-05-31") %>%
+  riem_measures(station = "ORD", date_start = "2017-01-01", date_end = "2017-12-31") %>%
   dplyr::select(valid, tmpf, p01i, sknt)%>%
   replace(is.na(.), 0) %>%
     mutate(inspection_date = as.Date(ymd_h(substr(valid,1,13)))) %>%
@@ -183,3 +216,26 @@ weather.Panel <-
 
 glimpse(weather.Panel)
 ```
+
+```{r plot_weather, catche = TRUE}
+grid.arrange(
+  ggplot(weather.Panel, aes(inspection_date,Precipitation)) + geom_line() + 
+  labs(title="Percipitation", x="Day", y="Perecipitation") + plotTheme,
+  ggplot(weather.Panel, aes(inspection_date,Wind_Speed)) + geom_line() + 
+    labs(title="Wind Speed", x="Day", y="Wind Speed") + plotTheme,
+  ggplot(weather.Panel, aes(inspection_date,Temperature)) + geom_line() + 
+    labs(title="Temperature", x="Day", y="Temperature") + plotTheme,
+  top="Weather Data - Chicago ORD - 2017")
+```
+
+```{r weather_plot, cache = TRUE}
+ggplot(dat_census %>%
+         group_by(inspection_date) %>%
+         tally())+
+  geom_line(aes(x = inspection_date, y = n))+
+  labs(title="Inspections per day in Chicago, May, 2018",
+       x="Date", 
+       y="Number of Inspections")+
+  plotTheme
+```
+
