@@ -17,6 +17,7 @@ library(knitr)
 library(kableExtra)
 library(RSocrata)
 
+
 plotTheme <- theme(
   plot.title =element_text(size=12),
   plot.subtitle = element_text(size=8),
@@ -32,28 +33,59 @@ plotTheme <- theme(
   panel.grid.major=element_line(colour="#D0D0D0",size=.2),
   axis.ticks=element_blank())
 
-mapTheme <- theme(plot.title =element_text(size=12),
-                  plot.subtitle = element_text(size=8),
-                  plot.caption = element_text(size = 6),
-                  axis.line=element_blank(),
-                  axis.text.x=element_blank(),
-                  axis.text.y=element_blank(),
-                  axis.ticks=element_blank(),
-                  axis.title.x=element_blank(),
-                  axis.title.y=element_blank(),
-                  panel.background=element_blank(),
-                  panel.border=element_blank(),
-                  panel.grid.major=element_line(colour = 'transparent'),
-                  panel.grid.minor=element_blank(),
-                  legend.direction = "vertical", 
-                  legend.position = "right",
-                  plot.margin = margin(1, 1, 1, 1, 'cm'),
-                  legend.key.height = unit(1, "cm"), legend.key.width = unit(0.2, "cm"))
+mapTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2)
+  )
+}
 
 palette5 <- c("#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c")
 #palette5 <- c("#f0f9e8","#bae4bc","#7bccc4","#43a2ca","#0868ac")
 palette4 <- c("#D2FBD4","#92BCAB","#527D82","#123F5A")
 palette2 <- c("#6baed6","#08519c")
+
+```
+
+```{r setup_2, cache=TRUE, message=FALSE}
+nn_function <- function(measureFrom,measureTo,k) {
+  measureFrom_Matrix <- as.matrix(measureFrom)
+  measureTo_Matrix <- as.matrix(measureTo)
+  nn <-   
+    get.knnx(measureTo, measureFrom, k)$nn.dist
+  output <-
+    as.data.frame(nn) %>%
+    rownames_to_column(var = "thisPoint") %>%
+    gather(points, point_distance, V1:ncol(.)) %>%
+    arrange(as.numeric(thisPoint)) %>%
+    group_by(thisPoint) %>%
+    dplyr::summarize(pointDistance = mean(point_distance)) %>%
+    arrange(as.numeric(thisPoint)) %>% 
+    dplyr::select(-thisPoint) %>%
+    pull()
+  
+  return(output)  
+}
+
+qBr <- function(df, variable, rnd) {
+  if (missing(rnd)) {
+    as.character(quantile(round(df[[variable]],0),
+                          c(.01,.2,.4,.6,.8), na.rm=T))
+  } else if (rnd == FALSE | rnd == F) {
+    as.character(formatC(quantile(df[[variable]]), digits = 3),
+                 c(.01,.2,.4,.6,.8), na.rm=T)
+  }
+}
+q5 <- function(variable) {as.factor(ntile(variable, 5))}
 ```
 
 ```{r load_api_key, message = FALSE}
@@ -77,7 +109,7 @@ inspections <- st_as_sf(inspections, coords = c("location.latitude", "location.l
    st_transform('ESRI:102271') %>%
   filter(results != "Out of Business") %>%
   filter(results != "Not Ready") %>%
-  filter(facility_type == "Restaurant")
+  filter(facility_type == "Restaurant") 
 
 # I had to just download this locally and read in: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-City/ewy2-6yfk
 ChicagoBoundary <- st_read("BoundariesCity.geojson")%>%
@@ -92,7 +124,6 @@ ChicagoBoundary <- st_read("BoundariesCity.geojson")%>%
 # If no entry, but violation -> fail
 # If no entry, but no violations -> pass
 # If pass with conditions -> pass
-
 inspections <- inspections %>%
   mutate(results_numeric = ifelse(inspections$results == "Fail", 1, ifelse(((inspections$results == "No Entry")&(!is.na(inspections$violations))), 1, 0)))
 
@@ -104,19 +135,8 @@ inspections <- inspections %>%
 inspections <- inspections %>%
   mutate(violations_count = ifelse(!is.na(inspections$violations_count), inspections$violations_count + 1, 0))
 
-# Time bins - week & day of the week
-inspections <- inspections %>%
-  mutate(week = week(inspection_date),
-         dotw = wday(inspection_date, label=TRUE))
-
-# Create feature for # of previous inspections
-inspections <- inspections %>%
-  arrange(inspection_date) %>%
-   group_by(dba_name) %>%
-   mutate(inspectionCount = row_number() - 1L) %>%
-   ungroup()
-
-# Create feature for how many previous inspections they have failed
+# past_inspect & past_failed_inspect
+# Create feature for how many previous inspections they have had & how many of those they have failed
 # https://stackoverflow.com/questions/43957453/r-increasing-variable-based-on-previous-occurrences 
 inspections <- inspections %>%
   arrange(dba_name, inspection_date) %>%
@@ -138,38 +158,82 @@ inspections <- inspections %>%
                                       failed_inspect)) %>%
   select(-total_inspect, -failed_inspect)
 
+# no_of_days
+# Create feature for days since last inspection
+inspections <- inspections %>%
+  arrange(dba_name, inspection_date) %>%
+  group_by(dba_name) %>%
+  mutate(no_of_days = round(c(NA, diff(inspection_date)), 0))
+
+```
+
+```{r inspections_2016}
 # Subset for inspections in 2016 
 # We will estimate a model using inspection data from 2016 to predict for 2017
 # Doing these years because there was a change in violations in 7/2018 that may impact results: http://dev.cityofchicago.org/open%20data/data%20portal/2018/06/29/food-violations-changes.html
 inspections16 <- inspections %>%
    dplyr::filter((inspection_date > as.POSIXct("2016-01-01")) & (inspection_date < as.POSIXct("2017-01-01")))
 
-# 311 Requests
-# Sanitation code violations
-sanitation <- read.socrata(
-  "https://data.cityofchicago.org/resource/me59-5fac.json",
-  app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
-  email     = "willi2eh@upenn.edu",
-  password  = "Triscuit3!"
-)
-# Convert to sf object & filter for 2016
-sanitation <- st_as_sf(sanitation, coords = c("latitude", "longitude"), 
-                 crs = 4326, agr = "constant", na.fail=FALSE) %>%
-  st_transform('ESRI:102271') %>%
-  dplyr::filter((creation_date > as.POSIXct("2016-01-01")) & (creation_date < as.POSIXct("2017-01-01")))
+```
 
-# Rodents
-rodents <- read.socrata(
-  "https://data.cityofchicago.org/resource/97t6-zrhs.json",
-  app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
-  email     = "willi2eh@upenn.edu",
-  password  = "Triscuit3!"
-)
+```{r use_nn_function}
+# Pull in 311 Requests
+# sanitation 
+#sanitation <- read.socrata(
+ # "https://data.cityofchicago.org/resource/me59-5fac.json",
+  #app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
+  #email     = "willi2eh@upenn.edu",
+  #password  = "Triscuit3!"
+#)
 # Convert to sf object & filter for 2016
-rodents <- st_as_sf(rodents, coords = c("latitude", "longitude"), 
-                 crs = 4326, agr = "constant", na.fail=FALSE) %>%
-  st_transform('ESRI:102271') %>%
-  dplyr::filter((creation_date > as.POSIXct("2016-01-01")) & (creation_date < as.POSIXct("2017-01-01")))
+#sanitation <- st_as_sf(sanitation, coords = c("latitude", "longitude"), 
+ #                crs = 4326, agr = "constant", na.fail=FALSE) %>%
+#  dplyr::filter((creation_date > as.POSIXct("2016-01-01")) & (creation_date < as.POSIXct("2017-01-01"))) %>%
+ # st_transform(st_crs(inspections))
+
+sanitation <-
+  read.socrata("https://data.cityofchicago.org/Service-Requests/311-Service-Requests-Sanitation-Code-Complaints-Hi/me59-5fac") %>%
+    mutate(year = substr(creation_date,1,4)) %>% filter(year == "2016") %>%
+    dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    mutate(Legend = "Sanitation")
+
+# rodents
+rodents <-
+  read.socrata("https://data.cityofchicago.org/Service-Requests/311-Service-Requests-Rodent-Baiting-Historical/97t6-zrhs") %>%
+    mutate(year = substr(creation_date,1,4)) %>% filter(year == "2016") %>%
+    dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    mutate(Legend = "Rodents")
+
+# Create distance variables
+st_c <- st_coordinates
+
+# for some reason the column dba_name is causing an error on the nn_function??? drop it here and add back later?
+inspections16 <- inspections16 %>%
+  select(-dba_name) 
+
+inspections16 <- na.omit(inspections16)
+
+inspections16 <-
+  inspections16 %>%
+    dplyr::mutate(
+      sanitation_nn1 = nn_function(st_c(inspections16), st_c(sanitation), 1),
+      sanitation_nn2 = nn_function(st_c(inspections16), st_c(sanitation), 2),
+      sanitation_nn3 = nn_function(st_c(inspections16), st_c(sanitation), 3),
+      sanitation_nn4 = nn_function(st_c(inspections16), st_c(sanitation), 4),
+      sanitation_nn5 = nn_function(st_c(inspections16), st_c(sanitation), 5))
+
+inspections16 <-
+  inspections16 %>%
+    dplyr::mutate(
+      rodents_nn1 = nn_function(st_c(inspections16), st_c(rodents), 1),
+      rodents_nn2 = nn_function(st_c(inspections16), st_c(rodents), 2),
+      rodents_nn3 = nn_function(st_c(inspections16), st_c(rodents), 3),
+      rodents_nn4 = nn_function(st_c(inspections16), st_c(rodents), 4),
+      rodents_nn5 = nn_function(st_c(inspections16), st_c(rodents), 5))
 
 ```
 
@@ -252,17 +316,14 @@ dat_census <- st_join(inspections16 %>%
 chicagoNeighborhoods <- st_read("BoundariesNeighborhoods.geojson") %>%
    st_transform('ESRI:102271') 
 
-```
-
-```{r}
 # add neighborhoods to inspections data - this is an sf object
 inspections16 <- st_join(inspections16 %>% st_transform(crs=4326),
         chicagoNeighborhoods %>%
           st_transform(crs=4326),
         join=st_intersects,
               left = TRUE) 
-```
 
+```
 
 ```{r import_weather, message = FALSE, warning = FALSE, cache = TRUE}
 weather.Panel <- 
@@ -278,7 +339,10 @@ weather.Panel <-
               Wind_Speed = max(sknt)) %>%
     mutate(Temperature = ifelse(Temperature == 0, 42, Temperature))
 
-glimpse(weather.Panel)
+# Add weather data to inspections dataframe
+inspections16 <- inspections16 %>%
+ left_join(weather.Panel, by = "inspection_date") 
+
 ```
 
 # Exploratory Data Analysis
@@ -362,3 +426,125 @@ ggplot(dat_census %>%
        y="Number of Inspections")+
   plotTheme
 ```
+
+# Logistic Regression Model
+
+```{r warning=FALSE}
+# Train/test split
+set.seed(3456)
+trainIndex <- createDataPartition(y = paste(inspections16$sec_neigh, inspections16$results_numeric), p = .65, list = FALSE, times=1)
+inspectionTrain <- inspections16[ trainIndex,]
+inspectionTest  <- inspections16[-trainIndex,]
+```
+
+```{r reg1_model}
+# Logistic regression model with all of the variables- Kitchen sink model- Reg1
+reg1 <- glm(results_numeric ~ .,
+                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(risk, inspection_date, inspection_type, violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn1, sanitation_nn2, sanitation_nn3, sanitation_nn4, sanitation_nn5, rodents_nn1, rodents_nn2, rodents_nn3, rodents_nn4, rodents_nn5, sec_neigh, results_numeric, Temperature, Precipitation, Wind_Speed),
+                  family="binomial" (link="logit"))
+summary(reg1)
+```
+
+```{r reg2_model}
+# Logistic regression model with selected variables - Reg2
+reg2 <- glm(results_numeric ~ .,
+                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(risk,  violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn4, rodents_nn4, sec_neigh, results_numeric, Temperature),
+                  family="binomial" (link="logit"))
+summary(reg2)
+```
+
+```{r model_metrics}
+# Reg 2 model metrics
+testProbs <- data.frame(Outcome = as.factor(inspectionTest$results_numeric),
+                        Probs = predict(reg2, inspectionTest, type= "response"))
+
+testProbs <- testProbs %>% mutate(predOutcome  = as.factor(ifelse(testProbs$Probs > 0.5 , 1, 0)))
+
+caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome, 
+                       positive = "1")
+```
+```
+
+
+## Cross validation
+```{r cv, message=FALSE, warning=FALSE}
+
+ctrl <- trainControl(method = "cv", number = 100, classProbs=TRUE, summaryFunction=twoClassSummary)
+cvFit.reg1 <- train(results_numeric ~ ., data = inspections16 %>% st_drop_geometry() %>%
+                                   dplyr::select(rodents_nn5, sanitation_nn5, violations_count, risk, results_numeric) %>%
+                      dplyr::mutate(results_numeric = ifelse(results_numeric==1,"fail","pass")),
+                method="glm", family="binomial",
+                metric="ROC", trControl = ctrl)
+cvFit.reg1
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+OLD CODE: 
+
+```{r}
+reg.vars <- c("rodents_nn5", "sanitation_nn5", "violations_count", "risk")
+
+inspections16 <- inspections16 %>%
+  mutate(cvID = sample(round(nrow(inspections16) / 120), size=nrow(inspections16), replace = TRUE))
+
+crossValidate <- function(dataset, id, dependentVariable, indVariables) {
+
+allPredictions <- data.frame()
+cvID_list <- unique(dataset[[id]])
+
+for (i in cvID_list) {
+
+  thisFold <- i
+  cat("This hold out fold is", thisFold, "\n")
+
+  fold.train <- filter(dataset, dataset[[id]] != thisFold) %>% as.data.frame() %>% 
+                dplyr::select(id, geometry, indVariables, dependentVariable)
+  fold.test  <- filter(dataset, dataset[[id]] == thisFold) %>% as.data.frame() %>% 
+                dplyr::select(id, geometry, indVariables, dependentVariable)
+  
+  regression <-
+    glm(results_numeric ~ ., family = "binomial" (link="logit"), 
+      data = fold.train %>% 
+      dplyr::select(-geometry, -id))
+  
+  thisPrediction <- 
+    mutate(fold.test, Prediction = predict(regression, fold.test, type = "response"))
+    
+  allPredictions <-
+    rbind(allPredictions, thisPrediction)
+    
+  }
+  return(st_sf(allPredictions))
+}
+```
+
+```{r message=FALSE, warning=FALSE}
+reg.cv <- crossValidate(
+  dataset = inspections16,
+  id = "cvID",
+  dependentVariable = "results_numeric",
+  indVariables = reg.vars) %>%
+    dplyr::select(cvID = cvID, inspections16, Prediction, geometry)
+
+```
+
+
+# inspectionCount
+# Create feature for # of previous inspections
+#inspections <- inspections %>%
+ # arrange(inspection_date) %>%
+  # group_by(dba_name) %>%
+   #mutate(inspectionCount = row_number() - 1L) %>%
+   #ungroup()
