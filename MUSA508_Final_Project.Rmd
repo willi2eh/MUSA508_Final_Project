@@ -51,6 +51,7 @@ mapTheme <- theme(plot.title =element_text(size=12),
                   legend.key.height = unit(1, "cm"), legend.key.width = unit(0.2, "cm"))
 
 palette5 <- c("#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c")
+#palette5 <- c("#f0f9e8","#bae4bc","#7bccc4","#43a2ca","#0868ac")
 palette4 <- c("#D2FBD4","#92BCAB","#527D82","#123F5A")
 palette2 <- c("#6baed6","#08519c")
 ```
@@ -71,12 +72,16 @@ inspections <- read.socrata(
 
 # Convert to sf object
 # Filter for only restaurants that are in business
-inspections <- st_as_sf(inspections, coords = c("latitude", "longitude"), 
+inspections <- st_as_sf(inspections, coords = c("location.latitude", "location.longitude"), 
                  crs = 4326, agr = "constant", na.fail=FALSE) %>%
    st_transform('ESRI:102271') %>%
   filter(results != "Out of Business") %>%
   filter(results != "Not Ready") %>%
   filter(facility_type == "Restaurant")
+
+# I had to just download this locally and read in: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-City/ewy2-6yfk
+ChicagoBoundary <- st_read("BoundariesCity.geojson")%>%
+   st_transform('ESRI:102271') 
 
 ```
 
@@ -133,15 +138,43 @@ inspections <- inspections %>%
                                       failed_inspect)) %>%
   select(-total_inspect, -failed_inspect)
 
-# Subset for inspections in 2017 
-# We will estimate a model using inspection data from 2017 to predict for 2018
-inspections17 <- inspections %>%
-   dplyr::filter((inspection_date > as.POSIXct("2017-01-01")) & (inspection_date < as.POSIXct("2018-01-01")))
+# Subset for inspections in 2016 
+# We will estimate a model using inspection data from 2016 to predict for 2017
+# Doing these years because there was a change in violations in 7/2018 that may impact results: http://dev.cityofchicago.org/open%20data/data%20portal/2018/06/29/food-violations-changes.html
+inspections16 <- inspections %>%
+   dplyr::filter((inspection_date > as.POSIXct("2016-01-01")) & (inspection_date < as.POSIXct("2017-01-01")))
+
+# 311 Requests
+# Sanitation code violations
+sanitation <- read.socrata(
+  "https://data.cityofchicago.org/resource/me59-5fac.json",
+  app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
+  email     = "willi2eh@upenn.edu",
+  password  = "Triscuit3!"
+)
+# Convert to sf object & filter for 2016
+sanitation <- st_as_sf(sanitation, coords = c("latitude", "longitude"), 
+                 crs = 4326, agr = "constant", na.fail=FALSE) %>%
+  st_transform('ESRI:102271') %>%
+  dplyr::filter((creation_date > as.POSIXct("2016-01-01")) & (creation_date < as.POSIXct("2017-01-01")))
+
+# Rodents
+rodents <- read.socrata(
+  "https://data.cityofchicago.org/resource/97t6-zrhs.json",
+  app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
+  email     = "willi2eh@upenn.edu",
+  password  = "Triscuit3!"
+)
+# Convert to sf object & filter for 2016
+rodents <- st_as_sf(rodents, coords = c("latitude", "longitude"), 
+                 crs = 4326, agr = "constant", na.fail=FALSE) %>%
+  st_transform('ESRI:102271') %>%
+  dplyr::filter((creation_date > as.POSIXct("2016-01-01")) & (creation_date < as.POSIXct("2017-01-01")))
 
 ```
 
 ```{r get_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
-## change year???
+## don't think we need this but will leave here for now
 chicagoCensus <- 
   get_acs(geography = "tract", 
           variables = c("B01003_001", "B19013_001", 
@@ -171,6 +204,19 @@ chicagoCensus <-
 
 ```
 
+
+```{r get_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
+chicagoCensus <- 
+  get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001"), 
+          year = 2016, state="IL", geometry=T, county=c("Cook"), output = "wide") %>%
+  rename(TotalPop = B01001_001E,
+         NumberWhites = B01001A_001E,
+         Median_Income = B06011_001E) %>%
+  mutate(percentWhite = ((NumberWhites / TotalPop)*100),
+         raceContext = ifelse(percentWhite > .5, "Majority White", "Majority Non-White"),
+         incomeContext = ifelse(Median_Income > 32322, "High Income", "Low Income"))
+```
+
 ```{r extract_geometries, cache = TRUE}
 chicagoTracts <- 
   chicagoCensus %>%
@@ -179,12 +225,13 @@ chicagoTracts <-
   select(GEOID, geometry) %>% 
   st_sf 
 
-inspections <- inspections %>% st_transform(4326) 
+inspections16 <- inspections16 %>% st_transform(4326) 
 
 ```
 
 ```{r add_census_tracts, cache = TRUE, message = FALSE, warning = FALSE}
-dat_census <- st_join(inspections17 %>% 
+# this creates a new data frame with inspections and census data - not an sf object
+dat_census <- st_join(inspections16 %>% 
           filter(is.na(location.latitude) == FALSE &
                    is.na(location.longitude) == FALSE) %>%
           st_as_sf(., coords = c("location.longitude", "location.latitude"), crs = 4326),
@@ -200,9 +247,26 @@ dat_census <- st_join(inspections17 %>%
  
 ```
 
+```{r neighborhoods, cache = TRUE, message = FALSE, warning = FALSE, results = 'hide'}
+# I had to just download this locally and read in: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-Neighborhoods/bbvz-uum9
+chicagoNeighborhoods <- st_read("BoundariesNeighborhoods.geojson") %>%
+   st_transform('ESRI:102271') 
+
+```
+
+```{r}
+# add neighborhoods to inspections data - this is an sf object
+inspections16 <- st_join(inspections16 %>% st_transform(crs=4326),
+        chicagoNeighborhoods %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) 
+```
+
+
 ```{r import_weather, message = FALSE, warning = FALSE, cache = TRUE}
 weather.Panel <- 
-  riem_measures(station = "ORD", date_start = "2017-01-01", date_end = "2017-12-31") %>%
+  riem_measures(station = "ORD", date_start = "2016-01-01", date_end = "2016-12-31") %>%
   dplyr::select(valid, tmpf, p01i, sknt)%>%
   replace(is.na(.), 0) %>%
     mutate(inspection_date = as.Date(ymd_h(substr(valid,1,13)))) %>%
@@ -217,6 +281,66 @@ weather.Panel <-
 glimpse(weather.Panel)
 ```
 
+# Exploratory Data Analysis
+
+```{r failure_2016}
+
+# Map of restaurants that failed inspection in 2016
+inspections16_fail <- inspections16 %>% 
+  filter(results_numeric == 1) %>%
+  st_transform('ESRI:102271') 
+
+ggplot() + 
+  geom_sf(data=ChicagoBoundary) +
+  geom_sf(data=inspections16_fail, size=.3) +
+  labs(title = "Restaurants that failed inspection in 2016") +
+  mapTheme
+
+```
+
+```{r med_income_failure_2016}
+# fixes projection issue
+chicagoCensus <- chicagoCensus %>% 
+   st_transform('ESRI:102271') 
+
+# the census data has Cook County tracts that go beyond the city boundary - don't want to map those
+selection <- 
+  chicagoCensus[ChicagoBoundary,] 
+
+ggplot(selection) + 
+  geom_sf(aes(fill = q5(Median_Income))) +
+  geom_sf(data=inspections16_fail, size=.2) +
+  scale_fill_manual(values = palette5,labels = qBr(chicagoCensus, "Median_Income"),name = "Median_Income\n(Quintile Breaks)") +
+  labs(title = "Inspection failures and median income of tracts ") +
+  mapTheme
+
+```
+
+```{r neighborhoods_failure_2016}
+ggplot() + 
+  geom_sf(data=chicagoNeighborhoods, fill="light blue") +
+  geom_sf(data=inspections16_fail, size=.3) +
+  labs(title = "Inspection failures and neighborhoods") +
+  mapTheme
+
+```
+
+```{r 2016_inspections_by_neighborhood}
+# bar plot of neighborhoods with the most failures (over 50)
+inspections16_fail %>%
+  st_drop_geometry() %>%
+  dplyr::group_by(sec_neigh) %>%
+  summarize(n = n()) %>%
+  filter(n > 49) %>%
+  filter(sec_neigh != "NA") %>%
+  ggplot(aes(x=reorder(sec_neigh, n), y=n)) +
+  geom_bar(stat = "identity", fill="#08519c") +
+  coord_flip() +
+  plotTheme
+
+```
+
+
 ```{r plot_weather, catche = TRUE}
 grid.arrange(
   ggplot(weather.Panel, aes(inspection_date,Precipitation)) + geom_line() + 
@@ -225,7 +349,7 @@ grid.arrange(
     labs(title="Wind Speed", x="Day", y="Wind Speed") + plotTheme,
   ggplot(weather.Panel, aes(inspection_date,Temperature)) + geom_line() + 
     labs(title="Temperature", x="Day", y="Temperature") + plotTheme,
-  top="Weather Data - Chicago ORD - 2017")
+  top="Weather Data - Chicago ORD - 2016")
 ```
 
 ```{r weather_plot, cache = TRUE}
@@ -233,9 +357,8 @@ ggplot(dat_census %>%
          group_by(inspection_date) %>%
          tally())+
   geom_line(aes(x = inspection_date, y = n))+
-  labs(title="Inspections per day in Chicago, May, 2018",
+  labs(title="Inspections per day in Chicago, 2016",
        x="Date", 
        y="Number of Inspections")+
   plotTheme
 ```
-
