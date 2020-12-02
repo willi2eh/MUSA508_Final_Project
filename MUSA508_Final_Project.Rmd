@@ -165,6 +165,13 @@ inspections <- inspections %>%
   group_by(dba_name) %>%
   mutate(no_of_days = round(c(NA, diff(inspection_date)), 0))
 
+# days_operating
+# Create feature for days the restaurant has been operating (days since first inspection)
+inspections <- inspections %>%
+  arrange(dba_name, inspection_date) %>%
+  group_by(dba_name) %>% 
+  mutate(days_operating = today - min(ymd(inspection_date)))
+
 ```
 
 ```{r inspections_2016}
