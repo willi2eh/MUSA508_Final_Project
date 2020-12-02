@@ -408,7 +408,7 @@ inspections16_fail %>%
 ```{r plot_weather, catche = TRUE}
 grid.arrange(
   ggplot(weather.Panel, aes(inspection_date,Precipitation)) + geom_line() + 
-  labs(title="Percipitation", x="Day", y="Perecipitation") + plotTheme,
+  labs(title="Precipitation", x="Day", y="Precipitation") + plotTheme,
   ggplot(weather.Panel, aes(inspection_date,Wind_Speed)) + geom_line() + 
     labs(title="Wind Speed", x="Day", y="Wind Speed") + plotTheme,
   ggplot(weather.Panel, aes(inspection_date,Temperature)) + geom_line() + 
