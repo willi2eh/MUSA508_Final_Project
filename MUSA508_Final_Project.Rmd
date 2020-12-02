@@ -16,7 +16,9 @@ library(gridExtra)
 library(knitr)
 library(kableExtra)
 library(RSocrata)
-
+library(FNN)
+library(caret)
+library(plotROC)
 
 plotTheme <- theme(
   plot.title =element_text(size=12),
@@ -50,7 +52,7 @@ mapTheme <- function(base_size = 12) {
 }
 
 palette5 <- c("#eff3ff","#bdd7e7","#6baed6","#3182bd","#08519c")
-#palette5 <- c("#f0f9e8","#bae4bc","#7bccc4","#43a2ca","#0868ac")
+palette5b <- c("#f0f9e8","#bae4bc","#7bccc4","#43a2ca","#0868ac")
 palette4 <- c("#D2FBD4","#92BCAB","#527D82","#123F5A")
 palette2 <- c("#6baed6","#08519c")
 
@@ -62,16 +64,16 @@ nn_function <- function(measureFrom,measureTo,k) {
   measureTo_Matrix <- as.matrix(measureTo)
   nn <-   
     get.knnx(measureTo, measureFrom, k)$nn.dist
-  output <-
-    as.data.frame(nn) %>%
-    rownames_to_column(var = "thisPoint") %>%
-    gather(points, point_distance, V1:ncol(.)) %>%
-    arrange(as.numeric(thisPoint)) %>%
-    group_by(thisPoint) %>%
-    dplyr::summarize(pointDistance = mean(point_distance)) %>%
-    arrange(as.numeric(thisPoint)) %>% 
-    dplyr::select(-thisPoint) %>%
-    pull()
+    output <-
+      as.data.frame(nn) %>%
+      rownames_to_column(var = "thisPoint") %>%
+      gather(points, point_distance, V1:ncol(.)) %>%
+      arrange(as.numeric(thisPoint)) %>%
+      group_by(thisPoint) %>%
+      dplyr::summarize(pointDistance = mean(point_distance)) %>%
+      arrange(as.numeric(thisPoint)) %>% 
+      dplyr::select(-thisPoint) %>%
+      pull()
   
   return(output)  
 }
@@ -170,7 +172,12 @@ inspections <- inspections %>%
 inspections <- inspections %>%
   arrange(dba_name, inspection_date) %>%
   group_by(dba_name) %>% 
-  mutate(days_operating = today - min(ymd(inspection_date)))
+  mutate(days_operating = today() - min(ymd(inspection_date)))
+
+# high_risk
+# Create feature designating high risk vs everything else
+inspections <- inspections %>%
+  mutate(high_risk = ifelse(risk == "Risk 1 (High)", 1, 0))
 
 ```
 
@@ -204,7 +211,8 @@ sanitation <-
     dplyr::select(Y = latitude, X = longitude) %>%
     na.omit() %>%
     st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
-    mutate(Legend = "Sanitation")
+    mutate(Legend = "Sanitation") %>%
+    st_transform(st_crs(inspections))
 
 # rodents
 rodents <-
@@ -213,7 +221,8 @@ rodents <-
     dplyr::select(Y = latitude, X = longitude) %>%
     na.omit() %>%
     st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
-    mutate(Legend = "Rodents")
+    mutate(Legend = "Rodents") %>%
+    st_transform(st_crs(inspections))
 
 # Create distance variables
 st_c <- st_coordinates
@@ -244,39 +253,9 @@ inspections16 <-
 
 ```
 
-```{r get_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
-## don't think we need this but will leave here for now
-chicagoCensus <- 
-  get_acs(geography = "tract", 
-          variables = c("B01003_001", "B19013_001", 
-                        "B02001_002", "B08013_001",
-                        "B08012_001", "B08301_001", 
-                        "B08301_010", "B01002_001"), 
-          year = 2017, 
-          state = "IL", 
-          geometry = TRUE, 
-          county=c("Cook"),
-          output = "wide") %>%
-  rename(Total_Pop =  B01003_001E,
-         Med_Inc = B19013_001E,
-         Med_Age = B01002_001E,
-         White_Pop = B02001_002E,
-         Travel_Time = B08013_001E,
-         Num_Commuters = B08012_001E,
-         Means_of_Transport = B08301_001E,
-         Total_Public_Trans = B08301_010E) %>%
-  select(Total_Pop, Med_Inc, White_Pop, Travel_Time,
-         Means_of_Transport, Total_Public_Trans,
-         Med_Age,
-         GEOID, geometry) %>%
-  mutate(Percent_White = White_Pop / Total_Pop,
-         Mean_Commute_Time = Travel_Time / Total_Public_Trans,
-         Percent_Taking_Public_Trans = Total_Public_Trans / Means_of_Transport)
-
-```
-
 
 ```{r get_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
+# Get 2016 census data
 chicagoCensus <- 
   get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001"), 
           year = 2016, state="IL", geometry=T, county=c("Cook"), output = "wide") %>%
@@ -286,36 +265,14 @@ chicagoCensus <-
   mutate(percentWhite = ((NumberWhites / TotalPop)*100),
          raceContext = ifelse(percentWhite > .5, "Majority White", "Majority Non-White"),
          incomeContext = ifelse(Median_Income > 32322, "High Income", "Low Income"))
-```
 
-```{r extract_geometries, cache = TRUE}
-chicagoTracts <- 
-  chicagoCensus %>%
-  as.data.frame() %>%
-  distinct(GEOID, .keep_all = TRUE) %>%
-  select(GEOID, geometry) %>% 
-  st_sf 
-
-inspections16 <- inspections16 %>% st_transform(4326) 
-
-```
-
-```{r add_census_tracts, cache = TRUE, message = FALSE, warning = FALSE}
-# this creates a new data frame with inspections and census data - not an sf object
-dat_census <- st_join(inspections16 %>% 
-          filter(is.na(location.latitude) == FALSE &
-                   is.na(location.longitude) == FALSE) %>%
-          st_as_sf(., coords = c("location.longitude", "location.latitude"), crs = 4326),
-        chicagoTracts %>%
+# combine inspection df and census df
+inspections16 <- st_join(inspections16 %>% st_transform(crs=4326),
+        chicagoCensus %>%
           st_transform(crs=4326),
         join=st_intersects,
-              left = TRUE) %>%
-  rename(Origin.Tract = GEOID) %>%
-  mutate(location.longitude = unlist(map(geometry, 1)),
-         location.latitude = unlist(map(geometry, 2)))%>%
-  as.data.frame() %>%
-  select(-geometry)
- 
+              left = TRUE) 
+
 ```
 
 ```{r neighborhoods, cache = TRUE, message = FALSE, warning = FALSE, results = 'hide'}
@@ -364,8 +321,8 @@ inspections16_fail <- inspections16 %>%
 ggplot() + 
   geom_sf(data=ChicagoBoundary) +
   geom_sf(data=inspections16_fail, size=.3) +
-  labs(title = "Restaurants that failed inspection in 2016") +
-  mapTheme
+  labs(title = "Restaurants that Failed Inspection in 2016") +
+  mapTheme()
 
 ```
 
@@ -381,9 +338,9 @@ selection <-
 ggplot(selection) + 
   geom_sf(aes(fill = q5(Median_Income))) +
   geom_sf(data=inspections16_fail, size=.2) +
-  scale_fill_manual(values = palette5,labels = qBr(chicagoCensus, "Median_Income"),name = "Median_Income\n(Quintile Breaks)") +
-  labs(title = "Inspection failures and median income of tracts ") +
-  mapTheme
+  scale_fill_manual(values = rev(palette5b),labels = qBr(chicagoCensus, "Median_Income"),name = "Median_Income\n(Quintile Breaks)") +
+  labs(title = "Inspection Failures and Median Income of Census Tracts ") +
+  mapTheme()
 
 ```
 
@@ -392,8 +349,19 @@ ggplot() +
   geom_sf(data=chicagoNeighborhoods, fill="light blue") +
   geom_sf(data=inspections16_fail, size=.3) +
   labs(title = "Inspection failures and neighborhoods") +
-  mapTheme
+  mapTheme()
 
+```
+
+```{r neighborhood_fails}
+#Add variable for number of failed inspections by neighborhood
+chicagoNeighborhoods$fail_count <- lengths(st_intersects(chicagoNeighborhoods, inspections16_fail))
+
+ggplot(chicagoNeighborhoods) + 
+  geom_sf(aes(fill = q5(fail_count))) +
+  scale_fill_manual(values = palette5,labels = qBr(chicagoNeighborhoods, "fail_count"),name = "Inspection Failures\n(Quintile Breaks)") +
+  labs(title = "Inspection Failures by Neighborhood") +
+  mapTheme()
 ```
 
 ```{r 2016_inspections_by_neighborhood}
@@ -410,7 +378,6 @@ inspections16_fail %>%
   plotTheme
 
 ```
-
 
 ```{r plot_weather, catche = TRUE}
 grid.arrange(
@@ -438,6 +405,7 @@ ggplot(dat_census %>%
 
 ```{r warning=FALSE}
 # Train/test split
+inspections16 <- na.omit(inspections16)
 set.seed(3456)
 trainIndex <- createDataPartition(y = paste(inspections16$sec_neigh, inspections16$results_numeric), p = .65, list = FALSE, times=1)
 inspectionTrain <- inspections16[ trainIndex,]
@@ -447,7 +415,7 @@ inspectionTest  <- inspections16[-trainIndex,]
 ```{r reg1_model}
 # Logistic regression model with all of the variables- Kitchen sink model- Reg1
 reg1 <- glm(results_numeric ~ .,
-                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(risk, inspection_date, inspection_type, violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn1, sanitation_nn2, sanitation_nn3, sanitation_nn4, sanitation_nn5, rodents_nn1, rodents_nn2, rodents_nn3, rodents_nn4, rodents_nn5, sec_neigh, results_numeric, Temperature, Precipitation, Wind_Speed),
+                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(inspection_type, violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn1, sanitation_nn2, sanitation_nn3, sanitation_nn4, sanitation_nn5, rodents_nn1, rodents_nn2, rodents_nn3, rodents_nn4, rodents_nn5, sec_neigh, results_numeric, Temperature, Precipitation, Wind_Speed, days_operating, Median_Income, percentWhite, high_risk),
                   family="binomial" (link="logit"))
 summary(reg1)
 ```
@@ -455,36 +423,187 @@ summary(reg1)
 ```{r reg2_model}
 # Logistic regression model with selected variables - Reg2
 reg2 <- glm(results_numeric ~ .,
-                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(risk,  violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn4, rodents_nn4, sec_neigh, results_numeric, Temperature),
+                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(high_risk,  violations_count, past_failed_inspect, days_operating, Temperature, percentWhite, sec_neigh, results_numeric),
                   family="binomial" (link="logit"))
 summary(reg2)
+
 ```
+
+# Model Performance 
+
+## Cross Validation
 
 ```{r model_metrics}
 # Reg 2 model metrics
 testProbs <- data.frame(Outcome = as.factor(inspectionTest$results_numeric),
                         Probs = predict(reg2, inspectionTest, type= "response"))
 
-testProbs <- testProbs %>% mutate(predOutcome  = as.factor(ifelse(testProbs$Probs > 0.5 , 1, 0)))
+testProbs <- testProbs %>% mutate(predOutcome  = as.factor(ifelse(testProbs$Probs > 0.41 , 1, 0)))
 
 caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome, 
                        positive = "1")
 ```
-```
 
-
-## Cross validation
 ```{r cv, message=FALSE, warning=FALSE}
 
 ctrl <- trainControl(method = "cv", number = 100, classProbs=TRUE, summaryFunction=twoClassSummary)
 cvFit.reg1 <- train(results_numeric ~ ., data = inspections16 %>% st_drop_geometry() %>%
-                                   dplyr::select(rodents_nn5, sanitation_nn5, violations_count, risk, results_numeric) %>%
+                                   dplyr::select(inspection_type, violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn1, sanitation_nn2, sanitation_nn3, sanitation_nn4, sanitation_nn5, rodents_nn1, rodents_nn2, rodents_nn3, rodents_nn4, rodents_nn5, sec_neigh, results_numeric, Temperature, Precipitation, Wind_Speed, days_operating, Median_Income, percentWhite, high_risk) %>%
                       dplyr::mutate(results_numeric = ifelse(results_numeric==1,"fail","pass")),
                 method="glm", family="binomial",
                 metric="ROC", trControl = ctrl)
 cvFit.reg1
 ```
 
+```{r cv, message=FALSE, warning=FALSE}
+
+ctrl <- trainControl(method = "cv", number = 100, classProbs=TRUE, summaryFunction=twoClassSummary)
+cvFit.reg2 <- train(results_numeric ~ ., data = inspections16 %>% st_drop_geometry() %>%
+                                   dplyr::select(violations_count, high_risk, past_failed_inspect, days_operating, Temperature, percentWhite, sec_neigh, results_numeric) %>%
+                      dplyr::mutate(results_numeric = ifelse(results_numeric==1,"fail","pass")),
+                method="glm", family="binomial",
+                metric="ROC", trControl = ctrl)
+cvFit.reg2
+```
+
+```{r message=FALSE, warning=FALSE}
+#Kitchen sink model metrics - Reg1
+dplyr::select(cvFit.reg1$resample, -Resample) %>%
+  gather(metric, value) %>%
+  left_join(gather(cvFit.reg1$results[2:4], metric, mean)) %>%
+  ggplot(aes(value)) + 
+    geom_histogram(bins=35, fill = "#FF006A") +
+    facet_wrap(~metric) +
+    geom_vline(aes(xintercept = mean), colour = "#981FAC", linetype = 3, size = 1.5) +
+    scale_x_continuous(limits = c(0, 1)) +
+    labs(x="Goodness of Fit", y="Count", title="CV Goodness of Fit Metrics Reg1",
+         subtitle = "Across-fold mean reprented as dotted lines") +
+    plotTheme
+```
+
+```{r}
+# Better fitting model metrics - Reg2
+dplyr::select(cvFit.reg2$resample, -Resample) %>%
+  gather(metric, value) %>%
+  left_join(gather(cvFit.reg2$results[2:4], metric, mean)) %>%
+  ggplot(aes(value)) + 
+    geom_histogram(bins=35, fill = "#FF006A") +
+    facet_wrap(~metric) +
+    geom_vline(aes(xintercept = mean), colour = "#981FAC", linetype = 3, size = 1.5) +
+    scale_x_continuous(limits = c(0, 1)) +
+    labs(x="Goodness of Fit", y="Count", title="CV Goodness of Fit Metrics Reg2",
+         subtitle = "Across-fold mean reprented as dotted lines") +
+    plotTheme
+```
+
+## ROC Curve
+
+```{r message=FALSE, warning=FALSE}
+# ROC Curve
+ggplot(testProbs, aes(d = as.numeric(testProbs$Outcome), m = Probs)) +
+  geom_roc(n.cuts = 50, labels = FALSE, colour = "#FE9900") +
+  style_roc(theme = theme_grey) +
+  geom_abline(slope = 1, intercept = 0, size = 1.5, color = 'grey') +
+  labs(title = "ROC Curve - churnModel")
+```
+
+```{r message=FALSE, warning=FALSE}
+pROC::auc(testProbs$Outcome, testProbs$Probs)
+```
+
+## Optimal Threshold
+
+```{r}
+cost_benefit_table <-
+   testProbs %>%
+      count(predOutcome, Outcome) %>%
+      summarize(True_Negative = sum(n[predOutcome==0 & Outcome==0]),
+                True_Positive = sum(n[predOutcome==1 & Outcome==1]),
+                False_Negative = sum(n[predOutcome==0 & Outcome==1]),
+                False_Positive = sum(n[predOutcome==1 & Outcome==0])) %>%
+       gather(Variable, Count) %>%
+    bind_cols(data.frame(Description = c(
+              "We predicted pass and the restaurant passed inspection",
+              "We predicted failure and the restaurant failed inspection",
+              "We predicted pass and the restaurant failed inspection",
+              "We predicted failure and the restaurant passed inspection")))
+kable(cost_benefit_table) %>% 
+  kable_styling(font_size = 12, full_width = F,
+                bootstrap_options = c("striped", "hover", "condensed")) 
+```
+
+```{r}
+iterateThresholds <- function(data, observedClass, predictedProbs, group) {
+#This function takes as its inputs, a data frame with an observed binomial class (1 or 0); a vector of predicted probabilities; and optionally a group indicator like race. It returns accuracy plus counts and rates of confusion matrix outcomes. It's a bit verbose because of the if (missing(group)). I don't know another way to make an optional parameter.
+  observedClass <- enquo(observedClass)
+  predictedProbs <- enquo(predictedProbs)
+  group <- enquo(group)
+  x = .01
+  all_prediction <- data.frame()
+  
+  if (missing(group)) {
+  
+    while (x <= 1) {
+    this_prediction <- data.frame()
+    
+    this_prediction <-
+      data %>%
+      mutate(predclass = ifelse(!!predictedProbs > x, 1,0)) %>%
+      count(predclass, !!observedClass) %>%
+      summarize(Count_TN = sum(n[predclass==0 & !!observedClass==0]),
+                Count_TP = sum(n[predclass==1 & !!observedClass==1]),
+                Count_FN = sum(n[predclass==0 & !!observedClass==1]),
+                Count_FP = sum(n[predclass==1 & !!observedClass==0]),
+                Rate_TP = Count_TP / (Count_TP + Count_FN),
+                Rate_FP = Count_FP / (Count_FP + Count_TN),
+                Rate_FN = Count_FN / (Count_FN + Count_TP),
+                Rate_TN = Count_TN / (Count_TN + Count_FP),
+                Accuracy = (Count_TP + Count_TN) / 
+                           (Count_TP + Count_TN + Count_FN + Count_FP)) %>%
+      mutate(Threshold = round(x,2))
+    
+    all_prediction <- rbind(all_prediction,this_prediction)
+    x <- x + .01
+  }
+  return(all_prediction)
+  }
+  else if (!missing(group)) { 
+   while (x <= 1) {
+    this_prediction <- data.frame()
+    
+    this_prediction <-
+      data %>%
+      mutate(predclass = ifelse(!!predictedProbs > x, 1,0)) %>%
+      group_by(!!group) %>%
+      count(predclass, !!observedClass) %>%
+      summarize(Count_TN = sum(n[predclass==0 & !!observedClass==0]),
+                Count_TP = sum(n[predclass==1 & !!observedClass==1]),
+                Count_FN = sum(n[predclass==0 & !!observedClass==1]),
+                Count_FP = sum(n[predclass==1 & !!observedClass==0]),
+                Rate_TP = Count_TP / (Count_TP + Count_FN),
+                Rate_FP = Count_FP / (Count_FP + Count_TN),
+                Rate_FN = Count_FN / (Count_FN + Count_TP),
+                Rate_TN = Count_TN / (Count_TN + Count_FP),
+                Accuracy = (Count_TP + Count_TN) / 
+                           (Count_TP + Count_TN + Count_FN + Count_FP)) %>%
+      mutate(Threshold = round(x,2))
+    
+    all_prediction <- rbind(all_prediction,this_prediction)
+    x <- x + .01
+  }
+  return(all_prediction)
+  }
+}
+```
+
+```{r}
+whichThreshold <- 
+  iterateThresholds(
+     data=testProbs, observedClass = Outcome, predictedProbs = Probs)
+whichThreshold <- as.data.frame(whichThreshold)
+```
+
+0.41 looks like good accuracy and has lower FN and FPs
 
 
 
@@ -555,3 +674,66 @@ reg.cv <- crossValidate(
   # group_by(dba_name) %>%
    #mutate(inspectionCount = row_number() - 1L) %>%
    #ungroup()
+   
+```{r get_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
+## don't think we need this but will leave here for now
+chicagoCensus <- 
+  get_acs(geography = "tract", 
+          variables = c("B01003_001", "B19013_001", 
+                        "B02001_002", "B08013_001",
+                        "B08012_001", "B08301_001", 
+                        "B08301_010", "B01002_001"), 
+          year = 2017, 
+          state = "IL", 
+          geometry = TRUE, 
+          county=c("Cook"),
+          output = "wide") %>%
+  rename(Total_Pop =  B01003_001E,
+         Med_Inc = B19013_001E,
+         Med_Age = B01002_001E,
+         White_Pop = B02001_002E,
+         Travel_Time = B08013_001E,
+         Num_Commuters = B08012_001E,
+         Means_of_Transport = B08301_001E,
+         Total_Public_Trans = B08301_010E) %>%
+  select(Total_Pop, Med_Inc, White_Pop, Travel_Time,
+         Means_of_Transport, Total_Public_Trans,
+         Med_Age,
+         GEOID, geometry) %>%
+  mutate(Percent_White = White_Pop / Total_Pop,
+         Mean_Commute_Time = Travel_Time / Total_Public_Trans,
+         Percent_Taking_Public_Trans = Total_Public_Trans / Means_of_Transport)
+
+```
+
+
+
+```{r extract_geometries, cache = TRUE}
+chicagoTracts <- 
+  chicagoCensus %>%
+  as.data.frame() %>%
+  distinct(GEOID, .keep_all = TRUE) %>%
+  select(GEOID, geometry) %>% 
+  st_sf 
+
+inspections16 <- inspections16 %>% st_transform(4326) 
+
+```
+
+```{r add_census_tracts, cache = TRUE, message = FALSE, warning = FALSE}
+# this creates a new data frame with inspections and census data - not an sf object
+dat_census <- st_join(inspections16 %>% 
+          filter(is.na(location.latitude) == FALSE &
+                   is.na(location.longitude) == FALSE) %>%
+          st_as_sf(., coords = c("location.longitude", "location.latitude"), crs = 4326),
+        chicagoTracts %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) %>%
+  rename(Origin.Tract = GEOID) %>%
+  mutate(location.longitude = unlist(map(geometry, 1)),
+         location.latitude = unlist(map(geometry, 2)))%>%
+  as.data.frame() %>%
+  select(-geometry)
+ 
+```
