@@ -311,6 +311,26 @@ inspections16 <- inspections16 %>%
 
 # Exploratory Data Analysis
 
+```{r}
+# Create a graph that looks at the categorical feature "risk"
+
+inspections16 %>%
+  st_drop_geometry() %>%
+  dplyr::mutate(Results = ifelse(results_numeric==1, "Fail", "Pass")) %>%
+  dplyr::select(Results, risk) %>%
+  gather(Variable, value, -Results) %>%
+  count(Variable, value, Results) %>%
+  ggplot(aes(value, n, fill = Results)) +   
+    geom_bar(position = "dodge", stat="identity") +
+    scale_fill_manual(values = palette2) +
+    labs(x="Result of Inspection", y="Count",
+         title = "Risk Categories and Inspection Results") +
+    plotTheme + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+
 ```{r failure_2016}
 
 # Map of restaurants that failed inspection in 2016
@@ -375,6 +395,8 @@ inspections16_fail %>%
   ggplot(aes(x=reorder(sec_neigh, n), y=n)) +
   geom_bar(stat = "identity", fill="#08519c") +
   coord_flip() +
+  labs(x=" ", y="Count of Failed Inspections",
+         title = "Count of Failed Inspections by Neighborhood") +
   plotTheme
 
 ```
@@ -504,7 +526,7 @@ ggplot(testProbs, aes(d = as.numeric(testProbs$Outcome), m = Probs)) +
   geom_roc(n.cuts = 50, labels = FALSE, colour = "#FE9900") +
   style_roc(theme = theme_grey) +
   geom_abline(slope = 1, intercept = 0, size = 1.5, color = 'grey') +
-  labs(title = "ROC Curve - churnModel")
+  labs(title = "ROC Curve")
 ```
 
 ```{r message=FALSE, warning=FALSE}
