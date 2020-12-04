@@ -311,7 +311,7 @@ inspections16 <- inspections16 %>%
 
 # Exploratory Data Analysis
 
-```{r}
+```{r risk_graph}
 # Create a graph that looks at the categorical feature "risk"
 
 inspections16 %>%
@@ -323,11 +323,26 @@ inspections16 %>%
   ggplot(aes(value, n, fill = Results)) +   
     geom_bar(position = "dodge", stat="identity") +
     scale_fill_manual(values = palette2) +
-    labs(x="Result of Inspection", y="Count",
+    labs(x="Inspection Result", y="Count",
          title = "Risk Categories and Inspection Results") +
     plotTheme + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 
+```
+```{r continuous_graphs}
+# Check out differences in pass/fail for some of the continuous variables
+inspections16 %>%
+  st_drop_geometry() %>%
+  dplyr::mutate(Results = ifelse(results_numeric==1, "Fail", "Pass")) %>%
+  dplyr::select(Results, violations_count, past_failed_inspect, Temperature) %>%
+  gather(Variable, value, -Results) %>%
+    ggplot(aes(Results, value, fill=Results)) + 
+      geom_bar(position = "dodge", stat = "summary", fun.y = "mean") + 
+      facet_wrap(~Variable, scales = "free") +
+      scale_fill_manual(values = palette2) +
+      labs(x="Inspection Result", y="Value", 
+           title = "Feature Associations with the Likelihood of Failed Inspection") +
+      theme(legend.position = "none")
 ```
 
 
@@ -494,9 +509,9 @@ dplyr::select(cvFit.reg1$resample, -Resample) %>%
   gather(metric, value) %>%
   left_join(gather(cvFit.reg1$results[2:4], metric, mean)) %>%
   ggplot(aes(value)) + 
-    geom_histogram(bins=35, fill = "#FF006A") +
+    geom_histogram(bins=35, fill = "#6baed6") +
     facet_wrap(~metric) +
-    geom_vline(aes(xintercept = mean), colour = "#981FAC", linetype = 3, size = 1.5) +
+    geom_vline(aes(xintercept = mean), colour = "#08519c", linetype = 3, size = 1.5) +
     scale_x_continuous(limits = c(0, 1)) +
     labs(x="Goodness of Fit", y="Count", title="CV Goodness of Fit Metrics Reg1",
          subtitle = "Across-fold mean reprented as dotted lines") +
@@ -509,9 +524,9 @@ dplyr::select(cvFit.reg2$resample, -Resample) %>%
   gather(metric, value) %>%
   left_join(gather(cvFit.reg2$results[2:4], metric, mean)) %>%
   ggplot(aes(value)) + 
-    geom_histogram(bins=35, fill = "#FF006A") +
+    geom_histogram(bins=35, fill = "#6baed6") +
     facet_wrap(~metric) +
-    geom_vline(aes(xintercept = mean), colour = "#981FAC", linetype = 3, size = 1.5) +
+    geom_vline(aes(xintercept = mean), colour = "#08519c", linetype = 3, size = 1.5) +
     scale_x_continuous(limits = c(0, 1)) +
     labs(x="Goodness of Fit", y="Count", title="CV Goodness of Fit Metrics Reg2",
          subtitle = "Across-fold mean reprented as dotted lines") +
@@ -523,7 +538,7 @@ dplyr::select(cvFit.reg2$resample, -Resample) %>%
 ```{r message=FALSE, warning=FALSE}
 # ROC Curve
 ggplot(testProbs, aes(d = as.numeric(testProbs$Outcome), m = Probs)) +
-  geom_roc(n.cuts = 50, labels = FALSE, colour = "#FE9900") +
+  geom_roc(n.cuts = 50, labels = FALSE, colour = "#08519c") +
   style_roc(theme = theme_grey) +
   geom_abline(slope = 1, intercept = 0, size = 1.5, color = 'grey') +
   labs(title = "ROC Curve")
