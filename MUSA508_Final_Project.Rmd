@@ -2,6 +2,17 @@
 title: "MUSA508_Final_Project"
 output: html_document
 ---
+Points to hit in markdown: 
+a. Motivate the analysis – “What is the use case; why would someone want to replicate your analysis and why would they use this approach?”
+	b. Describe the data you used.
+	c. Describe your exploratory analysis using maps and plots.
+	d. What is the spatial or space/time process?
+d. Describe your modeling approach and show how you arrived at your final model.
+e. Validate your model with cross-validation and describe how your predictions are useful (accuracy vs. generalizability).
+f. Provide additional maps and data visualizations to show that your model is useful.
+g. Talk about how your analysis meets the use case you set out to address.
+h. What could you do to make the analysis better?
+
 
 # Setup
 ```{r setup_13, cache=TRUE, message=FALSE}
