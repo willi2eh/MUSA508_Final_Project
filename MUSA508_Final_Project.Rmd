@@ -180,13 +180,33 @@ inspections <- inspections %>%
   mutate(high_risk = ifelse(risk == "Risk 1 (High)", 1, 0))
 
 ```
+```{r neighborhoods, cache = TRUE, message = FALSE, warning = FALSE, results = 'hide'}
+# I had to just download this locally and read in: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-Neighborhoods/bbvz-uum9
+chicagoNeighborhoods <- st_read("BoundariesNeighborhoods.geojson") %>%
+   st_transform('ESRI:102271') 
+
+# add neighborhoods to inspections data - this is an sf object
+inspections <- st_join(inspections %>% st_transform(crs=4326),
+        chicagoNeighborhoods %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) 
+
+inspections <- inspections %>%
+        select(-shape_area, -shape_len)
+
+```
 
 ```{r inspections_2016}
 # Subset for inspections in 2016 
+# and then another df for 2017
 # We will estimate a model using inspection data from 2016 to predict for 2017
 # Doing these years because there was a change in violations in 7/2018 that may impact results: http://dev.cityofchicago.org/open%20data/data%20portal/2018/06/29/food-violations-changes.html
 inspections16 <- inspections %>%
    dplyr::filter((inspection_date > as.POSIXct("2016-01-01")) & (inspection_date < as.POSIXct("2017-01-01")))
+
+inspections17 <- inspections %>%
+   dplyr::filter((inspection_date > as.POSIXct("2017-01-01")) & (inspection_date < as.POSIXct("2018-01-01")))
 
 ```
 
@@ -227,34 +247,46 @@ rodents <-
 # Create distance variables
 st_c <- st_coordinates
 
-# for some reason the column dba_name is causing an error on the nn_function??? drop it here and add back later?
-inspections16 <- inspections16 %>%
+# for some reason the column dba_name is causing an error on the nn_function - dropping it since aka_name is similar
+inspections <- inspections %>%
   select(-dba_name) 
 
-inspections16 <- na.omit(inspections16)
+inspections <- na.omit(inspections)
 
-inspections16 <-
-  inspections16 %>%
+inspections <-
+  inspections %>%
     dplyr::mutate(
-      sanitation_nn1 = nn_function(st_c(inspections16), st_c(sanitation), 1),
-      sanitation_nn2 = nn_function(st_c(inspections16), st_c(sanitation), 2),
-      sanitation_nn3 = nn_function(st_c(inspections16), st_c(sanitation), 3),
-      sanitation_nn4 = nn_function(st_c(inspections16), st_c(sanitation), 4),
-      sanitation_nn5 = nn_function(st_c(inspections16), st_c(sanitation), 5))
+      sanitation_nn1 = nn_function(st_c(inspections), st_c(sanitation), 1),
+      sanitation_nn2 = nn_function(st_c(inspections), st_c(sanitation), 2),
+      sanitation_nn3 = nn_function(st_c(inspections), st_c(sanitation), 3),
+      sanitation_nn4 = nn_function(st_c(inspections), st_c(sanitation), 4),
+      sanitation_nn5 = nn_function(st_c(inspections), st_c(sanitation), 5))
 
-inspections16 <-
-  inspections16 %>%
+inspections <-
+  inspections %>%
     dplyr::mutate(
-      rodents_nn1 = nn_function(st_c(inspections16), st_c(rodents), 1),
-      rodents_nn2 = nn_function(st_c(inspections16), st_c(rodents), 2),
-      rodents_nn3 = nn_function(st_c(inspections16), st_c(rodents), 3),
-      rodents_nn4 = nn_function(st_c(inspections16), st_c(rodents), 4),
-      rodents_nn5 = nn_function(st_c(inspections16), st_c(rodents), 5))
+      rodents_nn1 = nn_function(st_c(inspections), st_c(rodents), 1),
+      rodents_nn2 = nn_function(st_c(inspections), st_c(rodents), 2),
+      rodents_nn3 = nn_function(st_c(inspections), st_c(rodents), 3),
+      rodents_nn4 = nn_function(st_c(inspections), st_c(rodents), 4),
+      rodents_nn5 = nn_function(st_c(inspections), st_c(rodents), 5))
 
 ```
 
+```{r inspections_2016}
+# Subset for inspections in 2016 
+# and then another df for 2017
+# We will estimate a model using inspection data from 2016 to predict for 2017
+# Doing these years because there was a change in violations in 7/2018 that may impact results: http://dev.cityofchicago.org/open%20data/data%20portal/2018/06/29/food-violations-changes.html
+inspections16 <- inspections %>%
+   dplyr::filter((inspection_date > as.POSIXct("2016-01-01")) & (inspection_date < as.POSIXct("2017-01-01")))
 
-```{r get_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
+inspections17 <- inspections %>%
+   dplyr::filter((inspection_date > as.POSIXct("2017-01-01")) & (inspection_date < as.POSIXct("2018-01-01")))
+
+```
+
+```{r get_16_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
 # Get 2016 census data
 chicagoCensus <- 
   get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001"), 
@@ -275,21 +307,29 @@ inspections16 <- st_join(inspections16 %>% st_transform(crs=4326),
 
 ```
 
-```{r neighborhoods, cache = TRUE, message = FALSE, warning = FALSE, results = 'hide'}
-# I had to just download this locally and read in: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-Neighborhoods/bbvz-uum9
-chicagoNeighborhoods <- st_read("BoundariesNeighborhoods.geojson") %>%
-   st_transform('ESRI:102271') 
+```{r get_17_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
+# Get 2016 census data
+chicagoCensus <- 
+  get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001"), 
+          year = 2017, state="IL", geometry=T, county=c("Cook"), output = "wide") %>%
+  rename(TotalPop = B01001_001E,
+         NumberWhites = B01001A_001E,
+         Median_Income = B06011_001E) %>%
+  mutate(percentWhite = ((NumberWhites / TotalPop)*100),
+         raceContext = ifelse(percentWhite > .5, "Majority White", "Majority Non-White"),
+         incomeContext = ifelse(Median_Income > 32322, "High Income", "Low Income"))
 
-# add neighborhoods to inspections data - this is an sf object
-inspections16 <- st_join(inspections16 %>% st_transform(crs=4326),
-        chicagoNeighborhoods %>%
+# combine inspection df and census df
+inspections17 <- st_join(inspections17%>% st_transform(crs=4326),
+        chicagoCensus %>%
           st_transform(crs=4326),
         join=st_intersects,
               left = TRUE) 
 
 ```
 
-```{r import_weather, message = FALSE, warning = FALSE, cache = TRUE}
+```{r import_weather_16, message = FALSE, warning = FALSE, cache = TRUE}
+# Get 2016 weather data
 weather.Panel <- 
   riem_measures(station = "ORD", date_start = "2016-01-01", date_end = "2016-12-31") %>%
   dplyr::select(valid, tmpf, p01i, sknt)%>%
@@ -309,7 +349,32 @@ inspections16 <- inspections16 %>%
 
 ```
 
+```{r import_weather_17, message = FALSE, warning = FALSE, cache = TRUE}
+# Get 2017 weather data
+weather.Panel <- 
+  riem_measures(station = "ORD", date_start = "2017-01-01", date_end = "2017-12-31") %>%
+  dplyr::select(valid, tmpf, p01i, sknt)%>%
+  replace(is.na(.), 0) %>%
+    mutate(inspection_date = as.Date(ymd_h(substr(valid,1,13)))) %>%
+    mutate(week = week(inspection_date),
+           dotw = wday(inspection_date, label=TRUE)) %>%
+    group_by(inspection_date) %>%
+    summarize(Temperature = max(tmpf),
+              Precipitation = sum(p01i),
+              Wind_Speed = max(sknt)) %>%
+    mutate(Temperature = ifelse(Temperature == 0, 42, Temperature))
+
+# Add weather data to inspections dataframe
+inspections17 <- inspections17 %>%
+ left_join(weather.Panel, by = "inspection_date") 
+
+```
+
 # Exploratory Data Analysis
+
+First, we created some graphs of the model features and outcome variable. 
+
+It can be seen that those restaurants in the "Risk 1 (High)" category are most likely to fail inspection.
 
 ```{r risk_graph}
 # Create a graph that looks at the categorical feature "risk"
@@ -329,12 +394,14 @@ inspections16 %>%
 
 
 ```
-```{r continuous_graphs}
+Restaurants that fail inspection seem to have fewer past inspections and past failed inspections, more violations, and more days since last inspection on average. Restaurants that fail inspection seem to have similar averages to the restaurants that pass inspection for temperature, days the restaurant has been operating, and median income and percent white of census tracts the restaurant is in. 
+
+```{r continuous_graphs_1, message=FALSE, warning=FALSE}
 # Check out differences in pass/fail for some of the continuous variables
 inspections16 %>%
   st_drop_geometry() %>%
   dplyr::mutate(Results = ifelse(results_numeric==1, "Fail", "Pass")) %>%
-  dplyr::select(Results, violations_count, past_failed_inspect, Temperature) %>%
+  dplyr::select(Results, violations_count, past_inspect, past_failed_inspect, Temperature) %>%
   gather(Variable, value, -Results) %>%
     ggplot(aes(Results, value, fill=Results)) + 
       geom_bar(position = "dodge", stat = "summary", fun.y = "mean") + 
@@ -345,6 +412,22 @@ inspections16 %>%
       theme(legend.position = "none")
 ```
 
+```{r continuous_graphs_2, message=FALSE, warning=FALSE}
+# Check out differences in pass/fail for some more of the continuous variables
+inspections16 %>%
+  st_drop_geometry() %>%
+  dplyr::mutate(Results = ifelse(results_numeric==1, "Fail", "Pass")) %>%
+  dplyr::select(Results, no_of_days, days_operating, percentWhite, Median_Income) %>%
+  gather(Variable, value, -Results) %>%
+    ggplot(aes(Results, value, fill=Results)) + 
+      geom_bar(position = "dodge", stat = "summary", fun.y = "mean") + 
+      facet_wrap(~Variable, scales = "free") +
+      scale_fill_manual(values = palette2) +
+      labs(x="Inspection Result", y="Value", 
+           title = "Feature Associations with the Likelihood of Failed Inspection") +
+      theme(legend.position = "none")
+```
+Next we look at those restaurants that failed inspection across Chicago in 2016 (Figure ). It can be seen from Figure x and x that the majority of failed inspections occurred in the north east part of the city. The neighborhoods that had the most restaurants failing inspection were Lake View, Wicker Park/ West Town, and the Loop (Figure x). 
 
 ```{r failure_2016}
 
@@ -355,35 +438,8 @@ inspections16_fail <- inspections16 %>%
 
 ggplot() + 
   geom_sf(data=ChicagoBoundary) +
-  geom_sf(data=inspections16_fail, size=.3) +
+  geom_sf(data=inspections16_fail, size=.3, color ="red") +
   labs(title = "Restaurants that Failed Inspection in 2016") +
-  mapTheme()
-
-```
-
-```{r med_income_failure_2016}
-# fixes projection issue
-chicagoCensus <- chicagoCensus %>% 
-   st_transform('ESRI:102271') 
-
-# the census data has Cook County tracts that go beyond the city boundary - don't want to map those
-selection <- 
-  chicagoCensus[ChicagoBoundary,] 
-
-ggplot(selection) + 
-  geom_sf(aes(fill = q5(Median_Income))) +
-  geom_sf(data=inspections16_fail, size=.2) +
-  scale_fill_manual(values = rev(palette5b),labels = qBr(chicagoCensus, "Median_Income"),name = "Median_Income\n(Quintile Breaks)") +
-  labs(title = "Inspection Failures and Median Income of Census Tracts ") +
-  mapTheme()
-
-```
-
-```{r neighborhoods_failure_2016}
-ggplot() + 
-  geom_sf(data=chicagoNeighborhoods, fill="light blue") +
-  geom_sf(data=inspections16_fail, size=.3) +
-  labs(title = "Inspection failures and neighborhoods") +
   mapTheme()
 
 ```
@@ -416,6 +472,28 @@ inspections16_fail %>%
 
 ```
 
+Further, when we pull in census tract level data, we can see that the northeast part of the city where the most inspections occur is also home to Chicago's lower income census tracts (Figure x). 
+
+```{r med_income_failure_2016}
+# fixes projection issue
+chicagoCensus <- chicagoCensus %>% 
+   st_transform('ESRI:102271') 
+
+# the census data has Cook County tracts that go beyond the city boundary - don't want to map those
+selection <- 
+  chicagoCensus[ChicagoBoundary,] 
+
+ggplot(selection) + 
+  geom_sf(aes(fill = q5(Median_Income))) +
+  geom_sf(data=inspections16_fail, size=.2) +
+  scale_fill_manual(values = rev(palette5b),labels = qBr(chicagoCensus, "Median_Income"),name = "Median_Income\n(Quintile Breaks)") +
+  labs(title = "Inspection Failures and Median Income of Census Tracts ") +
+  mapTheme()
+
+```
+
+Looking at the yearly weather trends (Figure x), we can see that wind speeds vary, but precipitation and temperature increase in spring and summer. 
+
 ```{r plot_weather, catche = TRUE}
 grid.arrange(
   ggplot(weather.Panel, aes(inspection_date,Precipitation)) + geom_line() + 
@@ -427,7 +505,9 @@ grid.arrange(
   top="Weather Data - Chicago ORD - 2016")
 ```
 
-```{r weather_plot, cache = TRUE}
+The number of inspections done per day seems to vary randomly accross the year (Figure x). 
+
+```{r inpsection_plot, cache = TRUE}
 ggplot(dat_census %>%
          group_by(inspection_date) %>%
          tally())+
@@ -443,7 +523,7 @@ ggplot(dat_census %>%
 ```{r warning=FALSE}
 # Train/test split
 inspections16 <- na.omit(inspections16)
-set.seed(3456)
+set.seed(4476)
 trainIndex <- createDataPartition(y = paste(inspections16$sec_neigh, inspections16$results_numeric), p = .65, list = FALSE, times=1)
 inspectionTrain <- inspections16[ trainIndex,]
 inspectionTest  <- inspections16[-trainIndex,]
@@ -468,8 +548,6 @@ summary(reg2)
 
 # Model Performance 
 
-## Cross Validation
-
 ```{r model_metrics}
 # Reg 2 model metrics
 testProbs <- data.frame(Outcome = as.factor(inspectionTest$results_numeric),
@@ -480,6 +558,8 @@ testProbs <- testProbs %>% mutate(predOutcome  = as.factor(ifelse(testProbs$Prob
 caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome, 
                        positive = "1")
 ```
+
+## Cross Validation
 
 ```{r cv, message=FALSE, warning=FALSE}
 
@@ -641,6 +721,22 @@ whichThreshold <- as.data.frame(whichThreshold)
 ```
 
 0.41 looks like good accuracy and has lower FN and FPs
+
+## Model Performance on Next Year's Data
+
+```{r model_metrics}
+# Reg 2 model metrics
+testProbs <- data.frame(Outcome = as.factor(inspections17$results_numeric),
+                        Probs = predict(reg2, inspections17, type= "response"))
+
+testProbs <- testProbs %>% mutate(predOutcome  = as.factor(ifelse(testProbs$Probs > 0.41 , 1, 0)))
+
+caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome, 
+                       positive = "1")
+```
+
+
+
 
 
 
