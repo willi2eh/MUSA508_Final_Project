@@ -319,7 +319,7 @@ inspections16 <- st_join(inspections16 %>% st_transform(crs=4326),
 ```
 
 ```{r get_17_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
-# Get 2016 census data
+# Get 2017 census data
 chicagoCensus <- 
   get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001"), 
           year = 2017, state="IL", geometry=T, county=c("Cook"), output = "wide") %>%
@@ -449,6 +449,7 @@ inspections16_fail <- inspections16 %>%
 
 ggplot() + 
   geom_sf(data=ChicagoBoundary) +
+  geom_sf(data=chicagoNeighborhoods) +
   geom_sf(data=inspections16_fail, size=.3, color ="red") +
   labs(title = "Restaurants that Failed Inspection in 2016") +
   mapTheme()
@@ -531,10 +532,12 @@ ggplot(dat_census %>%
 
 # Logistic Regression Model
 
+
+
 ```{r warning=FALSE}
 # Train/test split
 inspections16 <- na.omit(inspections16)
-set.seed(4476)
+set.seed(33343)
 trainIndex <- createDataPartition(y = paste(inspections16$sec_neigh, inspections16$results_numeric), p = .65, list = FALSE, times=1)
 inspectionTrain <- inspections16[ trainIndex,]
 inspectionTest  <- inspections16[-trainIndex,]
@@ -559,6 +562,8 @@ summary(reg2)
 
 # Model Performance 
 
+A confusion matrix is produced to show the goodness of fit of the model. A positive parameter is specified to let the function know that a value of 1 designates failing inspection. Our sensitivity (trust positive rate) is not great, but it is xxx which is an improvement from the kitchen sink model above. Alternatively, our specificity (true negative rate) is high at xxx.  
+
 ```{r model_metrics}
 # Reg 2 model metrics
 testProbs <- data.frame(Outcome = as.factor(inspectionTest$results_numeric),
@@ -570,7 +575,28 @@ caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome,
                        positive = "1")
 ```
 
+```{r}
+cost_benefit_table <-
+   testProbs %>%
+      count(predOutcome, Outcome) %>%
+      summarize(True_Negative = sum(n[predOutcome==0 & Outcome==0]),
+                True_Positive = sum(n[predOutcome==1 & Outcome==1]),
+                False_Negative = sum(n[predOutcome==0 & Outcome==1]),
+                False_Positive = sum(n[predOutcome==1 & Outcome==0])) %>%
+       gather(Variable, Count) %>%
+    bind_cols(data.frame(Description = c(
+              "We predicted pass and the restaurant passed inspection",
+              "We predicted failure and the restaurant failed inspection",
+              "We predicted pass and the restaurant failed inspection",
+              "We predicted failure and the restaurant passed inspection")))
+kable(cost_benefit_table) %>% 
+  kable_styling(font_size = 12, full_width = F,
+                bootstrap_options = c("striped", "hover", "condensed")) 
+```
+
 ## Cross Validation
+
+Next we cross validate our model to further assess goodness of fit and see if our model results hold across 100 held out test sets (instead of just 1). We can see the second model has a mean AUC is around xxx, which indicates a decent fit, but is inconsistent. Our model does not seem to generalize well with respect to Sensitivity, which is the rate it correctly predicts true positives (restaurants that fail inspection). Our model better generalized with respect to Specificity, which is the rate it correctly predicts true negatives (restaurants that pass inspection).  
 
 ```{r cv, message=FALSE, warning=FALSE}
 
@@ -626,6 +652,8 @@ dplyr::select(cvFit.reg2$resample, -Resample) %>%
 
 ## ROC Curve
 
+The AUC (Area Under the Curve) for our model is xxx, which indicates a decent, useful fit. The graph supports this finding, with the curve being above the coin flip line but below the perfect fit line. 
+
 ```{r message=FALSE, warning=FALSE}
 # ROC Curve
 ggplot(testProbs, aes(d = as.numeric(testProbs$Outcome), m = Probs)) +
@@ -641,24 +669,7 @@ pROC::auc(testProbs$Outcome, testProbs$Probs)
 
 ## Optimal Threshold
 
-```{r}
-cost_benefit_table <-
-   testProbs %>%
-      count(predOutcome, Outcome) %>%
-      summarize(True_Negative = sum(n[predOutcome==0 & Outcome==0]),
-                True_Positive = sum(n[predOutcome==1 & Outcome==1]),
-                False_Negative = sum(n[predOutcome==0 & Outcome==1]),
-                False_Positive = sum(n[predOutcome==1 & Outcome==0])) %>%
-       gather(Variable, Count) %>%
-    bind_cols(data.frame(Description = c(
-              "We predicted pass and the restaurant passed inspection",
-              "We predicted failure and the restaurant failed inspection",
-              "We predicted pass and the restaurant failed inspection",
-              "We predicted failure and the restaurant passed inspection")))
-kable(cost_benefit_table) %>% 
-  kable_styling(font_size = 12, full_width = F,
-                bootstrap_options = c("striped", "hover", "condensed")) 
-```
+In this section, a function is created to iteratively loop through each threshold and calculate confusion metrics for each. The results are then examined by threshold to optimize. We find that the threshold of xxxx limits the false negatives (those we predict to pass but fail) and false positives (those we predict to fail but pass). We want to limit false negatives because incorrectly labeling a failed inspection as a pass means that customers using the app may be vulnerable to food borne illnesses at a restaurant they choose to go to. We want to limit false positives because it can be hurtful for businesses for their restaurants to be flagged when really they would pass inspection. We also want a threshold that keeps accuracy high. It looks like the optimal threshold for this model is xxx. 
 
 ```{r}
 iterateThresholds <- function(data, observedClass, predictedProbs, group) {
@@ -731,11 +742,12 @@ whichThreshold <-
 whichThreshold <- as.data.frame(whichThreshold)
 ```
 
-0.41 looks like good accuracy and has lower FN and FPs
+## Model Performance on Next Year's Data (2017)
 
-## Model Performance on Next Year's Data
+```{r model_metrics_17}
+# In the 2017 inspection data, the KENWOOD,OAKLAND neighborhood has two entries that are instead "OAKLAND,KENWOOD", so I fix those
+inspections17$sec_neigh[inspections17$sec_neigh == "OAKLAND,KENWOOD"] <- "KENWOOD,OAKLAND"
 
-```{r model_metrics}
 # Reg 2 model metrics
 testProbs <- data.frame(Outcome = as.factor(inspections17$results_numeric),
                         Probs = predict(reg2, inspections17, type= "response"))
@@ -746,7 +758,9 @@ caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome,
                        positive = "1")
 ```
 
+## Model Performance on Next Year's Data (2018)
 
+show model getting worse??
 
 
 
