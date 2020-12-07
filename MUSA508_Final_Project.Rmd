@@ -1,6 +1,8 @@
 ---
 title: "MUSA508_Final_Project"
-output: html_document
+output:
+  html_document:
+    code_folding: hide
 ---
 Points to hit in markdown: 
 a. Motivate the analysis – “What is the use case; why would someone want to replicate your analysis and why would they use this approach?”
@@ -208,19 +210,6 @@ inspections <- inspections %>%
 
 ```
 
-```{r inspections_2016}
-# Subset for inspections in 2016 
-# and then another df for 2017
-# We will estimate a model using inspection data from 2016 to predict for 2017
-# Doing these years because there was a change in violations in 7/2018 that may impact results: http://dev.cityofchicago.org/open%20data/data%20portal/2018/06/29/food-violations-changes.html
-inspections16 <- inspections %>%
-   dplyr::filter((inspection_date > as.POSIXct("2016-01-01")) & (inspection_date < as.POSIXct("2017-01-01")))
-
-inspections17 <- inspections %>%
-   dplyr::filter((inspection_date > as.POSIXct("2017-01-01")) & (inspection_date < as.POSIXct("2018-01-01")))
-
-```
-
 ```{r use_nn_function}
 # Pull in 311 Requests
 # sanitation 
@@ -295,6 +284,9 @@ inspections16 <- inspections %>%
 inspections17 <- inspections %>%
    dplyr::filter((inspection_date > as.POSIXct("2017-01-01")) & (inspection_date < as.POSIXct("2018-01-01")))
 
+inspections18 <- inspections %>%
+   dplyr::filter((inspection_date > as.POSIXct("2018-01-01")) & (inspection_date < as.POSIXct("2019-01-01")))
+
 ```
 
 ```{r get_16_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
@@ -332,6 +324,27 @@ chicagoCensus <-
 
 # combine inspection df and census df
 inspections17 <- st_join(inspections17%>% st_transform(crs=4326),
+        chicagoCensus %>%
+          st_transform(crs=4326),
+        join=st_intersects,
+              left = TRUE) 
+
+```
+
+```{r get_18_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
+# Get 2018 census data
+chicagoCensus <- 
+  get_acs(geography = "tract", variables = c("B01001_001E","B01001A_001E","B06011_001"), 
+          year = 2018, state="IL", geometry=T, county=c("Cook"), output = "wide") %>%
+  rename(TotalPop = B01001_001E,
+         NumberWhites = B01001A_001E,
+         Median_Income = B06011_001E) %>%
+  mutate(percentWhite = ((NumberWhites / TotalPop)*100),
+         raceContext = ifelse(percentWhite > .5, "Majority White", "Majority Non-White"),
+         incomeContext = ifelse(Median_Income > 32322, "High Income", "Low Income"))
+
+# combine inspection df and census df
+inspections18 <- st_join(inspections18%>% st_transform(crs=4326),
         chicagoCensus %>%
           st_transform(crs=4326),
         join=st_intersects,
@@ -377,6 +390,27 @@ weather.Panel <-
 
 # Add weather data to inspections dataframe
 inspections17 <- inspections17 %>%
+ left_join(weather.Panel, by = "inspection_date") 
+
+```
+
+```{r import_weather_17, message = FALSE, warning = FALSE, cache = TRUE}
+# Get 2018 weather data
+weather.Panel <- 
+  riem_measures(station = "ORD", date_start = "2018-01-01", date_end = "2018-12-31") %>%
+  dplyr::select(valid, tmpf, p01i, sknt)%>%
+  replace(is.na(.), 0) %>%
+    mutate(inspection_date = as.Date(ymd_h(substr(valid,1,13)))) %>%
+    mutate(week = week(inspection_date),
+           dotw = wday(inspection_date, label=TRUE)) %>%
+    group_by(inspection_date) %>%
+    summarize(Temperature = max(tmpf),
+              Precipitation = sum(p01i),
+              Wind_Speed = max(sknt)) %>%
+    mutate(Temperature = ifelse(Temperature == 0, 42, Temperature))
+
+# Add weather data to inspections dataframe
+inspections18 <- inspections18 %>%
  left_join(weather.Panel, by = "inspection_date") 
 
 ```
@@ -517,16 +551,19 @@ grid.arrange(
   top="Weather Data - Chicago ORD - 2016")
 ```
 
-The number of inspections done per day seems to vary randomly accross the year (Figure x). 
+The number of inspections done each week seems to vary randomly across the year but hover around 200 inspections a week (Figure x). 
 
 ```{r inpsection_plot, cache = TRUE}
-ggplot(dat_census %>%
-         group_by(inspection_date) %>%
-         tally())+
-  geom_line(aes(x = inspection_date, y = n))+
-  labs(title="Inspections per day in Chicago, 2016",
-       x="Date", 
-       y="Number of Inspections")+
+
+ggplot(inspections16 %>%
+         st_drop_geometry() %>%
+         dplyr::mutate(Week = week(inspections16$inspection_date)) %>%
+         group_by(Week) %>%
+         tally()) +
+  geom_line(aes(x = Week, y = n), size=1, color="#08519c")+
+  labs(title="Inspections per Week in Chicago, 2016",
+       x="Week (1-52)", 
+       y="Number of Inspections") +
   plotTheme
 ```
 
@@ -758,9 +795,23 @@ caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome,
                        positive = "1")
 ```
 
-## Model Performance on Next Year's Data (2018)
+```{r}
+# Map of predictions
+inspections17 <- inspections17 %>% 
+  mutate(Probs = predict(reg2, inspections17, type= "response")) %>%
+  mutate(predOutcome  = as.factor(ifelse(inspections17$Probs > 0.41 , 1, 0))) %>%
+  mutate(incorrect_prediction = ifelse((results_numeric==1 & predOutcome==0), 1, ifelse((results_numeric==0 & predOutcome==1), 1, 0)))
 
-show model getting worse??
+ggplot() + 
+  geom_sf(data=ChicagoBoundary) +
+  geom_sf(data=chicagoNeighborhoods) +
+  geom_sf(data = inspections17, aes(colour = factor(incorrect_prediction)), 
+          show.legend = "point", size = .75) 
+ 
+```
+
+
+## Model Performance on Next Year's Data (2018)
 
 
 
