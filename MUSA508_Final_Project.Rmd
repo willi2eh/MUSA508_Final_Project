@@ -15,6 +15,15 @@ f. Provide additional maps and data visualizations to show that your model is us
 g. Talk about how your analysis meets the use case you set out to address.
 h. What could you do to make the analysis better?
 
+# Introduction
+The analysis presented here is for the development of the machine learning model behind the app Eat Safe. 
+Eat Safe is a public health safety app that predicts whether a restaurant will fail it's next inspection. Eat Safe is less penalizing to restaurants than similar apps on the market. Instead of showing the last inspection score, which could have been 2 years ago, Eat Safe provides a forecast, taking into account environmental factors and past inspection score. This model will be updated annually. Eat Safe works to reduce the spread of foodborne illnesses through providing updated information, while protecting restaurants’ reputations. 
+
+- add something on why we are using logistic regression/ pass/fail classifier
+
+Data used in this analysis came from the [Chicago Data Portal](https://data.cityofchicago.org/). The inspection data contains inspections of restaurants and other food establishments in Chicago since 2010, with this analysis focusing specifically on restaurants. Inspections are performed by staff from the Chicago Department of Public Health’s Food Protection Program using a standardized procedure. Other open data included Chicago neighborhoods, 311 requests, and liquor licenses. Other data included in this analysis includes census data from the American Community Survey and weather data using the riem package, which allows us to pull weather data from stations across the world. 
+
+The model developed here uses spatial features such as neighborhoods and distance to 311 requests to identify risk of failing an inspection. Common violations for restaurants are due to improper temperature control for food, so the model also incorporates temperature. Further features about the restaurant and it's past inspections are developed. 
 
 # Setup
 ```{r setup_13, cache=TRUE, message=FALSE}
@@ -124,6 +133,7 @@ inspections <- st_as_sf(inspections, coords = c("location.latitude", "location.l
    st_transform('ESRI:102271') %>%
   filter(results != "Out of Business") %>%
   filter(results != "Not Ready") %>%
+  filter(inspection_type != "Non-Inspection") %>%
   filter(facility_type == "Restaurant") 
 
 # I had to just download this locally and read in: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-City/ewy2-6yfk
@@ -152,7 +162,6 @@ inspections <- inspections %>%
 
 # past_inspect & past_failed_inspect
 # Create feature for how many previous inspections they have had & how many of those they have failed
-# https://stackoverflow.com/questions/43957453/r-increasing-variable-based-on-previous-occurrences 
 inspections <- inspections %>%
   arrange(dba_name, inspection_date) %>%
   group_by(dba_name) %>%
@@ -178,7 +187,7 @@ inspections <- inspections %>%
 inspections <- inspections %>%
   arrange(dba_name, inspection_date) %>%
   group_by(dba_name) %>%
-  mutate(no_of_days = round(c(NA, diff(inspection_date)), 0))
+  mutate(no_of_days = round(c(0, diff(inspection_date)), 0))
 
 # days_operating
 # Create feature for days the restaurant has been operating (days since first inspection)
@@ -192,7 +201,12 @@ inspections <- inspections %>%
 inspections <- inspections %>%
   mutate(high_risk = ifelse(risk == "Risk 1 (High)", 1, 0))
 
+# critical_violations
+# Create a feature that determines the number of "serious" or "critical" violations per inspection
+inspections$critical_violations <- str_count(inspections$violations, "SERIOUS|CRITICAL")
+
 ```
+
 ```{r neighborhoods, cache = TRUE, message = FALSE, warning = FALSE, results = 'hide'}
 # I had to just download this locally and read in: https://data.cityofchicago.org/Facilities-Geographic-Boundaries/Boundaries-Neighborhoods/bbvz-uum9
 chicagoNeighborhoods <- st_read("BoundariesNeighborhoods.geojson") %>%
@@ -244,6 +258,15 @@ rodents <-
     mutate(Legend = "Rodents") %>%
     st_transform(st_crs(inspections))
 
+# liquor licenses 
+liquor <-
+  read.socrata("https://data.cityofchicago.org/Community-Economic-Development/Business-Licenses-Current-Liquor-and-Public-Places/nrmj-3kcf") %>%
+    dplyr::select(Y = LATITUDE, X = LONGITUDE) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+    mutate(Legend = "Liquor") %>%
+    st_transform(st_crs(inspections))
+
 # Create distance variables
 st_c <- st_coordinates
 
@@ -270,6 +293,15 @@ inspections <-
       rodents_nn3 = nn_function(st_c(inspections), st_c(rodents), 3),
       rodents_nn4 = nn_function(st_c(inspections), st_c(rodents), 4),
       rodents_nn5 = nn_function(st_c(inspections), st_c(rodents), 5))
+
+inspections <-
+  inspections %>%
+    dplyr::mutate(
+      liquor_nn1 = nn_function(st_c(inspections), st_c(liquor), 1),
+      liquor_nn2 = nn_function(st_c(inspections), st_c(liquor), 2),
+      liquor_nn3 = nn_function(st_c(inspections), st_c(liquor), 3),
+      liquor_nn4 = nn_function(st_c(inspections), st_c(liquor), 4),
+      liquor_nn5 = nn_function(st_c(inspections), st_c(liquor), 5))
 
 ```
 
@@ -439,14 +471,14 @@ inspections16 %>%
 
 
 ```
-Restaurants that fail inspection seem to have fewer past inspections and past failed inspections, more violations, and more days since last inspection on average. Restaurants that fail inspection seem to have similar averages to the restaurants that pass inspection for temperature, days the restaurant has been operating, and median income and percent white of census tracts the restaurant is in. 
+As seen in Figure x and x, restaurants that fail inspection seem to have fewer past inspections and past failed inspections, more critical violations and number of violations overall, and more days since last inspection on average. Restaurants that fail inspection seem to have similar averages to the restaurants that pass inspection for temperature, days the restaurant has been operating, and median income and percent white of census tracts the restaurant is in. 
 
 ```{r continuous_graphs_1, message=FALSE, warning=FALSE}
 # Check out differences in pass/fail for some of the continuous variables
 inspections16 %>%
   st_drop_geometry() %>%
   dplyr::mutate(Results = ifelse(results_numeric==1, "Fail", "Pass")) %>%
-  dplyr::select(Results, violations_count, past_inspect, past_failed_inspect, Temperature) %>%
+  dplyr::select(Results, violations_count, critical_violations, past_inspect, past_failed_inspect, no_of_days, days_operating) %>%
   gather(Variable, value, -Results) %>%
     ggplot(aes(Results, value, fill=Results)) + 
       geom_bar(position = "dodge", stat = "summary", fun.y = "mean") + 
@@ -462,7 +494,7 @@ inspections16 %>%
 inspections16 %>%
   st_drop_geometry() %>%
   dplyr::mutate(Results = ifelse(results_numeric==1, "Fail", "Pass")) %>%
-  dplyr::select(Results, no_of_days, days_operating, percentWhite, Median_Income) %>%
+  dplyr::select(Results, Temperature, percentWhite, Median_Income) %>%
   gather(Variable, value, -Results) %>%
     ggplot(aes(Results, value, fill=Results)) + 
       geom_bar(position = "dodge", stat = "summary", fun.y = "mean") + 
@@ -472,6 +504,7 @@ inspections16 %>%
            title = "Feature Associations with the Likelihood of Failed Inspection") +
       theme(legend.position = "none")
 ```
+
 Next we look at those restaurants that failed inspection across Chicago in 2016 (Figure ). It can be seen from Figure x and x that the majority of failed inspections occurred in the north east part of the city. The neighborhoods that had the most restaurants failing inspection were Lake View, Wicker Park/ West Town, and the Loop (Figure x). 
 
 ```{r failure_2016}
@@ -569,8 +602,6 @@ ggplot(inspections16 %>%
 
 # Logistic Regression Model
 
-
-
 ```{r warning=FALSE}
 # Train/test split
 inspections16 <- na.omit(inspections16)
@@ -583,7 +614,7 @@ inspectionTest  <- inspections16[-trainIndex,]
 ```{r reg1_model}
 # Logistic regression model with all of the variables- Kitchen sink model- Reg1
 reg1 <- glm(results_numeric ~ .,
-                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(inspection_type, violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn1, sanitation_nn2, sanitation_nn3, sanitation_nn4, sanitation_nn5, rodents_nn1, rodents_nn2, rodents_nn3, rodents_nn4, rodents_nn5, sec_neigh, results_numeric, Temperature, Precipitation, Wind_Speed, days_operating, Median_Income, percentWhite, high_risk),
+                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(inspection_type, critical_violations, violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn1, sanitation_nn2, sanitation_nn3, sanitation_nn4, sanitation_nn5, rodents_nn1, rodents_nn2, rodents_nn3, rodents_nn4, rodents_nn5, liquor_nn1, liquor_nn2, liquor_nn3, liquor_nn4, liquor_nn5, results_numeric, Temperature, Precipitation, Wind_Speed, days_operating, Median_Income, percentWhite, high_risk, sec_neigh),
                   family="binomial" (link="logit"))
 summary(reg1)
 ```
@@ -591,7 +622,7 @@ summary(reg1)
 ```{r reg2_model}
 # Logistic regression model with selected variables - Reg2
 reg2 <- glm(results_numeric ~ .,
-                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(high_risk,  violations_count, past_failed_inspect, days_operating, Temperature, percentWhite, sec_neigh, results_numeric),
+                  data=inspectionTrain %>% st_drop_geometry() %>% dplyr::select(high_risk, inspection_type, critical_violations, violations_count, days_operating, Temperature, liquor_nn5, sec_neigh, results_numeric),
                   family="binomial" (link="logit"))
 summary(reg2)
 
@@ -599,17 +630,22 @@ summary(reg2)
 
 # Model Performance 
 
-A confusion matrix is produced to show the goodness of fit of the model. A positive parameter is specified to let the function know that a value of 1 designates failing inspection. Our sensitivity (trust positive rate) is not great, but it is xxx which is an improvement from the kitchen sink model above. Alternatively, our specificity (true negative rate) is high at xxx.  
+A confusion matrix is produced to show the goodness of fit of the model. A positive parameter is specified to let the function know that a value of 1 designates failing inspection. Our sensitivity (trust positive rate) is 0.72, which greatly improved after our feature engineering. Our specificity (true negative rate) is high at 0.87. Accuracy is also high at 0.8369. A optimal threshold of 0.29 was used to produce this confusion matrix, see below for that analysis.
 
 ```{r model_metrics}
 # Reg 2 model metrics
 testProbs <- data.frame(Outcome = as.factor(inspectionTest$results_numeric),
                         Probs = predict(reg2, inspectionTest, type= "response"))
 
-testProbs <- testProbs %>% mutate(predOutcome  = as.factor(ifelse(testProbs$Probs > 0.41 , 1, 0)))
+testProbs <- testProbs %>% mutate(predOutcome  = as.factor(ifelse(testProbs$Probs > 0.29 , 1, 0)))
 
 caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome, 
                        positive = "1")
+
+cm16 <- confusionMatrix(testProbs$predOutcome, testProbs$Outcome, 
+                     positive = "1")
+
+Accuracy16 <- cm16$overall['Accuracy']
 ```
 
 ```{r}
@@ -631,49 +667,41 @@ kable(cost_benefit_table) %>%
                 bootstrap_options = c("striped", "hover", "condensed")) 
 ```
 
+## ROC Curve
+
+The AUC (Area Under the Curve) for our model is 0.89, which indicates a good, useful fit. The graph supports this finding, with the curve being above the coin flip line but below the perfect fit line. 
+
+```{r message=FALSE, warning=FALSE}
+# ROC Curve
+ggplot(testProbs, aes(d = as.numeric(testProbs$Outcome), m = Probs)) +
+  geom_roc(n.cuts = 50, labels = FALSE, colour = "#08519c") +
+  style_roc(theme = theme_grey) +
+  geom_abline(slope = 1, intercept = 0, size = 1.5, color = 'grey') +
+  labs(title = "ROC Curve")
+```
+
+
+```{r message=FALSE, warning=FALSE}
+pROC::auc(testProbs$Outcome, testProbs$Probs)
+```
+
 ## Cross Validation
 
-Next we cross validate our model to further assess goodness of fit and see if our model results hold across 100 held out test sets (instead of just 1). We can see the second model has a mean AUC is around xxx, which indicates a decent fit, but is inconsistent. Our model does not seem to generalize well with respect to Sensitivity, which is the rate it correctly predicts true positives (restaurants that fail inspection). Our model better generalized with respect to Specificity, which is the rate it correctly predicts true negatives (restaurants that pass inspection).  
-
-```{r cv, message=FALSE, warning=FALSE}
-
-ctrl <- trainControl(method = "cv", number = 100, classProbs=TRUE, summaryFunction=twoClassSummary)
-cvFit.reg1 <- train(results_numeric ~ ., data = inspections16 %>% st_drop_geometry() %>%
-                                   dplyr::select(inspection_type, violations_count, past_inspect, past_failed_inspect, no_of_days, sanitation_nn1, sanitation_nn2, sanitation_nn3, sanitation_nn4, sanitation_nn5, rodents_nn1, rodents_nn2, rodents_nn3, rodents_nn4, rodents_nn5, sec_neigh, results_numeric, Temperature, Precipitation, Wind_Speed, days_operating, Median_Income, percentWhite, high_risk) %>%
-                      dplyr::mutate(results_numeric = ifelse(results_numeric==1,"fail","pass")),
-                method="glm", family="binomial",
-                metric="ROC", trControl = ctrl)
-cvFit.reg1
-```
+Next we cross validate our model to further assess goodness of fit and see if our model results hold across 100 held out test sets (instead of just 1). We can see the model has a mean AUC is around xxx, which indicates a decent fit, but is inconsistent. Our model does not seem to generalize well with respect to Sensitivity, which is the rate it correctly predicts true positives (restaurants that fail inspection). Our model better generalized with respect to Specificity, which is the rate it correctly predicts true negatives (restaurants that pass inspection).  
 
 ```{r cv, message=FALSE, warning=FALSE}
 
 ctrl <- trainControl(method = "cv", number = 100, classProbs=TRUE, summaryFunction=twoClassSummary)
 cvFit.reg2 <- train(results_numeric ~ ., data = inspections16 %>% st_drop_geometry() %>%
-                                   dplyr::select(violations_count, high_risk, past_failed_inspect, days_operating, Temperature, percentWhite, sec_neigh, results_numeric) %>%
+                                   dplyr::select(high_risk, inspection_type, critical_violations, violations_count, days_operating, Temperature, liquor_nn5, sec_neigh, results_numeric) %>%
                       dplyr::mutate(results_numeric = ifelse(results_numeric==1,"fail","pass")),
                 method="glm", family="binomial",
                 metric="ROC", trControl = ctrl)
 cvFit.reg2
 ```
 
-```{r message=FALSE, warning=FALSE}
-#Kitchen sink model metrics - Reg1
-dplyr::select(cvFit.reg1$resample, -Resample) %>%
-  gather(metric, value) %>%
-  left_join(gather(cvFit.reg1$results[2:4], metric, mean)) %>%
-  ggplot(aes(value)) + 
-    geom_histogram(bins=35, fill = "#6baed6") +
-    facet_wrap(~metric) +
-    geom_vline(aes(xintercept = mean), colour = "#08519c", linetype = 3, size = 1.5) +
-    scale_x_continuous(limits = c(0, 1)) +
-    labs(x="Goodness of Fit", y="Count", title="CV Goodness of Fit Metrics Reg1",
-         subtitle = "Across-fold mean reprented as dotted lines") +
-    plotTheme
-```
-
 ```{r}
-# Better fitting model metrics - Reg2
+# Model metrics - Reg2
 dplyr::select(cvFit.reg2$resample, -Resample) %>%
   gather(metric, value) %>%
   left_join(gather(cvFit.reg2$results[2:4], metric, mean)) %>%
@@ -687,26 +715,9 @@ dplyr::select(cvFit.reg2$resample, -Resample) %>%
     plotTheme
 ```
 
-## ROC Curve
-
-The AUC (Area Under the Curve) for our model is xxx, which indicates a decent, useful fit. The graph supports this finding, with the curve being above the coin flip line but below the perfect fit line. 
-
-```{r message=FALSE, warning=FALSE}
-# ROC Curve
-ggplot(testProbs, aes(d = as.numeric(testProbs$Outcome), m = Probs)) +
-  geom_roc(n.cuts = 50, labels = FALSE, colour = "#08519c") +
-  style_roc(theme = theme_grey) +
-  geom_abline(slope = 1, intercept = 0, size = 1.5, color = 'grey') +
-  labs(title = "ROC Curve")
-```
-
-```{r message=FALSE, warning=FALSE}
-pROC::auc(testProbs$Outcome, testProbs$Probs)
-```
-
 ## Optimal Threshold
 
-In this section, a function is created to iteratively loop through each threshold and calculate confusion metrics for each. The results are then examined by threshold to optimize. We find that the threshold of xxxx limits the false negatives (those we predict to pass but fail) and false positives (those we predict to fail but pass). We want to limit false negatives because incorrectly labeling a failed inspection as a pass means that customers using the app may be vulnerable to food borne illnesses at a restaurant they choose to go to. We want to limit false positives because it can be hurtful for businesses for their restaurants to be flagged when really they would pass inspection. We also want a threshold that keeps accuracy high. It looks like the optimal threshold for this model is xxx. 
+In this section, a function is created to iteratively loop through each threshold and calculate confusion metrics for each. The results are then examined by threshold to optimize. We find that the threshold of xxxx limits the false negatives (those we predict to pass but fail) and false positives (those we predict to fail but pass). We want to limit false negatives because incorrectly labeling a failed inspection as a pass means that customers using the app may be vulnerable to food borne illnesses at a restaurant they choose to go to. We want to limit false positives because it can be hurtful for businesses for their restaurants to be flagged when really they would pass inspection. We also want a threshold that keeps accuracy high. It looks like the optimal threshold for this model is 0.29, which minimizes True Postives and True Negative while keeping Accuracy high. 
 
 ```{r}
 iterateThresholds <- function(data, observedClass, predictedProbs, group) {
@@ -779,39 +790,114 @@ whichThreshold <-
 whichThreshold <- as.data.frame(whichThreshold)
 ```
 
-## Model Performance on Next Year's Data (2017)
+## Model Performance on Next Year's Data 
+### 2017
 
 ```{r model_metrics_17}
 # In the 2017 inspection data, the KENWOOD,OAKLAND neighborhood has two entries that are instead "OAKLAND,KENWOOD", so I fix those
 inspections17$sec_neigh[inspections17$sec_neigh == "OAKLAND,KENWOOD"] <- "KENWOOD,OAKLAND"
 
 # Reg 2 model metrics
-testProbs <- data.frame(Outcome = as.factor(inspections17$results_numeric),
+testProbs17 <- data.frame(Outcome = as.factor(inspections17$results_numeric),
                         Probs = predict(reg2, inspections17, type= "response"))
 
-testProbs <- testProbs %>% mutate(predOutcome  = as.factor(ifelse(testProbs$Probs > 0.41 , 1, 0)))
+testProbs17 <- testProbs17 %>% mutate(predOutcome  = as.factor(ifelse(testProbs17$Probs > 0.41 , 1, 0)))
 
-caret::confusionMatrix(testProbs$predOutcome, testProbs$Outcome, 
+caret::confusionMatrix(testProbs17$predOutcome, testProbs17$Outcome, 
                        positive = "1")
+
+cm17 <- confusionMatrix(testProbs17$predOutcome, testProbs17$Outcome, 
+                     positive = "1")
+
+Accuracy17 <- cm17$overall['Accuracy']
 ```
+
+Looking at the predictions we got incorrect in 2017, we can see the are fairly evenly distributed across space, with the bulk appearing in downtown and the north east part of the city (where we see the most inspections and failed inspections). 
 
 ```{r}
 # Map of predictions
 inspections17 <- inspections17 %>% 
-  mutate(Probs = predict(reg2, inspections17, type= "response")) %>%
-  mutate(predOutcome  = as.factor(ifelse(inspections17$Probs > 0.41 , 1, 0))) %>%
-  mutate(incorrect_prediction = ifelse((results_numeric==1 & predOutcome==0), 1, ifelse((results_numeric==0 & predOutcome==1), 1, 0)))
+  dplyr::mutate(Prob = predict(reg2, inspections17, type= "response")) %>%
+  dplyr::mutate(predictedOutcome  = as.factor(ifelse(inspections17$Prob > 0.29 , 1, 0))) %>%
+  dplyr::mutate(incorrect_prediction = ifelse((results_numeric==1 & predictedOutcome==0), 1, ifelse((results_numeric==0 & predictedOutcome==1), 1, 0)))
+
+#mutate giving me issues so 
+inspections17$Prob <- predict(reg2, inspections17, type= "response")
+inspections17$predictedOutcome <- as.factor(ifelse(inspections17$Prob > 0.29 , 1, 0))
+inspections17$incorrect_prediction <- ifelse((inspections17$results_numeric==1 & inspections17$predictedOutcome==0), 1, ifelse((inspections17$results_numeric==0 & inspections17$predictedOutcome==1), 1, 0))
 
 ggplot() + 
   geom_sf(data=ChicagoBoundary) +
   geom_sf(data=chicagoNeighborhoods) +
   geom_sf(data = inspections17, aes(colour = factor(incorrect_prediction)), 
-          show.legend = "point", size = .75) 
+          show.legend = "point", size = .5) +
+  scale_colour_manual(values = c("#7bccc4", "#08519c"),
+                   name="Incorrect Prediction") +
+  labs(title="Incorrect Predictions Across Chicago") +
+  mapTheme()
  
 ```
 
+### 2018
 
-## Model Performance on Next Year's Data (2018)
+```{r model_metrics_18}
+# In the 2018 inspection data, the KENWOOD,OAKLAND neighborhood has two entries that are instead "OAKLAND,KENWOOD", so I fix those
+inspections18$sec_neigh[inspections18$sec_neigh == "OAKLAND,KENWOOD"] <- "KENWOOD,OAKLAND"
+
+# Reg 2 model metrics
+testProbs18 <- data.frame(Outcome = as.factor(inspections18$results_numeric),
+                        Probs = predict(reg2, inspections18, type= "response"))
+
+testProbs18 <- testProbs18 %>% mutate(predOutcome  = as.factor(ifelse(testProbs18$Probs > 0.41 , 1, 0)))
+
+caret::confusionMatrix(testProbs18$predOutcome, testProbs18$Outcome, 
+                       positive = "1")
+
+cm18 <- confusionMatrix(testProbs18$predOutcome, testProbs18$Outcome, 
+                     positive = "1")
+
+Accuracy18 <- cm18$overall['Accuracy']
+```
+### Comparison
+
+We can see that model accuracy is decreasing as we test model performance on subsequent years data. The model was built with 2016 data and performs almost as well on 2017 data. On 2018 data, model performance decreases. This shows the importance of having our model updated yearly. Model engineers will use this code to refit the model and confirm the appropriateness of features every year. This will help avoid the decrease in performance as years pass. 
+
+```{r accuracy}
+
+Accuracy <- c(Accuracy16, Accuracy17, Accuracy18)
+Year <- c(2016, 2017, 2018)
+accuracy<- data.frame(Year, Accuracy)
+
+ggplot(data=accuracy, aes(x=as.factor(Year), y=Accuracy)) +
+  geom_bar(stat="identity", width = .7, fill="#7bccc4") +
+  geom_text(aes(label = round(Accuracy,3)), vjust = -0.3)+
+  labs(x="Year", y="Accuracy", title="Model Accuracy Across Years",
+         subtitle = "2016 model performance tested on 2017 and 2018 data") +
+  theme(
+  plot.title =element_text(size=12),
+  plot.subtitle = element_text(size=8),
+  plot.caption = element_text(size = 6),
+  axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+  axis.text.y = element_text(size = 10),
+  axis.title.y = element_text(size = 10),
+  # Set the entire chart region to blank
+  panel.background=element_blank(),
+  plot.background=element_blank(),
+  #panel.border=element_rect(colour="#F0F0F0"),
+  # Format the grid
+  panel.grid.major=element_line(colour="#D0D0D0",size=.2),
+  axis.ticks=element_blank())
+
+```
+
+
+
+
+
+
+
+
+
 
 
 
@@ -945,4 +1031,14 @@ dat_census <- st_join(inspections16 %>%
   as.data.frame() %>%
   select(-geometry)
  
+```
+
+```{r}
+inspections16 %>%
+  st_drop_geometry() %>%
+  ggplot(aes(x=days_operating, y=past_failed_inspect)) +
+   geom_point(size=.4) +
+    geom_smooth(method=lm)
+  
+  
 ```
