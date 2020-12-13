@@ -6,16 +6,21 @@ output:
 ---
 
 # Introduction
-The analysis presented here is for the development of the machine learning model behind the app Eat Safe. 
-Eat Safe is a public health safety app that predicts whether a restaurant will fail it's next inspection. Eat Safe is less penalizing to restaurants than similar apps on the market. Instead of showing the last inspection score, which could have been 2 years ago, Eat Safe provides a forecast, taking into account environmental factors and past inspection score. This model will be updated annually. Eat Safe works to reduce the spread of foodborne illnesses through providing updated information, while protecting restaurants’ reputations. 
+The analysis presented here is for the development of the machine learning model behind the app **Eat Safe**. Eat Safe is a public health safety app that predicts whether a restaurant will fail its next sanitation inspection by the Department of Public Health in Chicago. Environmental factors and past inspection scores are accounted for in the model, which will be updated annually to reflect updated information. 
+
+In 2018, Yelp piloted incorporating previous health inspection scores for restaurants into their app, but this has stirred discontent among restaurant owners. For one, the health inspection score could be outdated (as the last health inspection could have occurred almost 2 years ago). The restaurant could have made corrections to the violation ever since, and an outdated health inspection score can be very harmful to a restaurant's business. Additionally, some restaurant owners felt that a past health inspection score placed an unfair burden on restaurants, as some health code violations such as rodent infestations could be more related to sanitation issues that have been plaguing the neighborhood. 
+
+Eat Safe aims to reduce the spread of foodborne illnesses, while providing objective assessments that protect restaurants' reputations. Instead of showing the past inspection score which could have been from 2 years ago, we provide a forecast of whether a restaurant is likely to pass or fail its next inspection, using the latest updated information.  
+
+The predicted inspection score can be incorporated into restaurant reviews on sites such as Yelp, Google Maps, and food blogs to enhance awareness of the food safety of restaurants.  
 
 For more information on EatSafe, check out this promo video: [INSERT SABRINA VID]
 
-The model developed here utilizes logistic regression, determining the liklihood of failing inspection and allowing us to classify a restaurant as likely to "fail" their next inspection or "pass" their next inspection. This allows for clear messaging in the app and through the API that a restaurant is "sure safe" or that a restaurant is potentially at risk of failing inspection. 
+The model developed here utilizes logistic regression, determining the likelihood of failing inspection and allowing us to classify a restaurant as likely to "fail" their next inspection or "pass" their next inspection. This allows for clear messaging in the app and through the API that a restaurant is "sure safe" or that a restaurant is potentially "at risk of failing inspection". 
 
-Data used in this analysis came from the [Chicago Data Portal](https://data.cityofchicago.org/). The inspection data contains inspections of restaurants and other food establishments in Chicago since 2010, with this analysis focusing specifically on restaurants. Inspections are performed by staff from the Chicago Department of Public Health’s Food Protection Program using a standardized procedure. Other open data included Chicago neighborhoods, 311 requests, and liquor licenses. Other data included in this analysis includes census data from the American Community Survey and weather data using the riem package, which allows us to pull weather data from stations across the world. 
+Data used in this analysis came from the [Chicago Data Portal](https://data.cityofchicago.org/). The inspection data contains inspections of restaurants and other food establishments in Chicago since 2010, with this analysis focusing specifically on restaurants. Inspections are performed by staff from the Chicago Department of Public Health’s Food Protection Program using a standardized procedure. Other open data we utilize include Chicago neighborhoods, 311 requests, and liquor licenses. Other data included in this analysis includes census data from the American Community Survey. We also use weather data using the riem package, which allows us to pull weather data from stations across the world. Common violations for restaurants are due to improper temperature control for food, so the model also incorporates temperature.
 
-The model developed here uses spatial features such as neighborhoods and distance to 311 requests to identify risk of failing an inspection. Common violations for restaurants are due to improper temperature control for food, so the model also incorporates temperature. Further features about the restaurant and it's past inspections are developed. 
+The model developed here uses spatial features such as neighborhoods and distance to 311 requests to identify the risk of failing an inspection.  Further features about the restaurant and its past inspections are developed. 
 
 # Setup
 
@@ -219,7 +224,7 @@ inspections <- inspections %>%
 
 ```{r use_nn_function}
 # Pull in 311 Requests
-# sanitation 
+
 #sanitation <- read.socrata(
  # "https://data.cityofchicago.org/resource/me59-5fac.json",
   #app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
@@ -444,7 +449,8 @@ inspections18 <- inspections18 %>%
 
 First, we created some graphs of the model features and outcome variable. 
 
-It can be seen that those restaurants in the "Risk 1 (High)" category are most likely to fail inspection.
+The risk category of each facility refers to how the establishment is categorized for its risk of adversely affecting the public's health, with 1 being the highest and 3 the lowest. The frequency of inspection is tied to this risk, with risk 1 establishments inspected most frequently and risk 3 least frequently. It can be seen that those restaurants in the "Risk 1 (High)" category are most likely to fail the inspection.
+
 
 ```{r risk_graph}
 # Create a graph that looks at the categorical feature "risk"
@@ -564,7 +570,7 @@ ggplot(selection) +
 
 ```
 
-Looking at the yearly weather trends (Figure x), we can see that wind speeds vary, but precipitation and temperature increase in spring and summer. 
+Looking at the yearly weather trends (Figure x), we can see that wind speeds vary, but precipitation and temperature increase in spring and summer. As shown in Figure x, the likelihood of failing an inspection increases with higher temperatures. 
 
 ```{r plot_weather, catche = TRUE}
 grid.arrange(
@@ -595,6 +601,8 @@ ggplot(inspections16 %>%
 
 # Logistic Regression Model
 
+The model developed here utilizes logistic regression, determining the likelihood of failing inspection and allowing us to classify a restaurant as likely to "fail" their next inspection or "pass" their next inspection. 
+
 ```{r warning=FALSE}
 # Train/test split
 inspections16 <- na.omit(inspections16)
@@ -611,6 +619,7 @@ reg1 <- glm(results_numeric ~ .,
                   family="binomial" (link="logit"))
 summary(reg1)
 ```
+In this model, we include the following selected features: high_risk, inspection_type, critical_violations, violations_count, days_operating, Temperature, liquor_nn5, sec_neigh, results_numeric.  
 
 ```{r reg2_model}
 # Logistic regression model with selected variables - Reg2
@@ -623,7 +632,7 @@ summary(reg2)
 
 # Model Performance 
 
-A confusion matrix is produced to show the goodness of fit of the model. A positive parameter is specified to let the function know that a value of 1 designates failing inspection. Our sensitivity (trust positive rate) is 0.72, which greatly improved after our feature engineering. Our specificity (true negative rate) is high at 0.87. Accuracy is also high at 0.8369. A optimal threshold of 0.29 was used to produce this confusion matrix, see below for that analysis.
+A confusion matrix is produced to show the goodness of fit of the model. A positive parameter is specified to let the function know that a value of 1 designates failing inspection. Our sensitivity (trust positive rate) is 0.72, which greatly improved after our feature engineering. Our specificity (true negative rate) is high at 0.87. Accuracy is also high at 0.8369. An optimal threshold of 0.29 was used to produce this confusion matrix (see below for analysis).
 
 ```{r model_metrics}
 # Reg 2 model metrics
@@ -680,7 +689,7 @@ pROC::auc(testProbs$Outcome, testProbs$Probs)
 
 ## Cross Validation
 
-Next we cross validate our model to further assess goodness of fit and see if our model results hold across 100 held out test sets (instead of just 1). We can see the model has a mean AUC is around 0.88, which indicates a good fit. Our model generalizes less well with respect to Sensitivity, which is the rate it correctly predicts true positives (restaurants that fail inspection). This sensitivity value has increased with additional feature engineering, which shows the importance of that work (and incdicates that further feature engineering could make the model even better). Our model generalized well with respect to Specificity, which is the rate it correctly predicts true negatives (restaurants that pass inspection).  
+Next we cross validate our model to further assess goodness of fit and see if our model results hold across 100 held out test sets (instead of just 1). We can see the model has a mean AUC that is around 0.88, which indicates a good fit. Our model generalizes less well with respect to Sensitivity, which is the rate it correctly predicts true positives (restaurants that fail inspection). This Sensitivity value has increased with additional feature engineering, which shows the importance of that work (and indicates that further feature engineering could make the model even better). Our model generalized well with respect to Specificity, which is the rate it correctly predicts true negatives (restaurants that pass inspection).  
 
 ```{r cv, message=FALSE, warning=FALSE}
 
@@ -805,7 +814,7 @@ cm17 <- confusionMatrix(testProbs17$predOutcome, testProbs17$Outcome,
 Accuracy17 <- cm17$overall['Accuracy']
 ```
 
-Looking at the predictions we got incorrect in 2017, we can see the are fairly evenly distributed across space, with the bulk appearing in downtown and the north east part of the city (where we see the most inspections and failed inspections). 
+Looking at the predictions we got incorrect in 2017, we can see they are fairly evenly distributed across space, with the bulk appearing in downtown and the north east part of the city (where we see the most inspections and failed inspections). 
 
 ```{r}
 # Map of predictions
@@ -853,7 +862,7 @@ Accuracy18 <- cm18$overall['Accuracy']
 ```
 ### Comparison
 
-We can see that model accuracy is decreasing as we test model performance on subsequent years data. The model was built with 2016 data and performs almost as well on 2017 data. On 2018 data, model performance decreases. This shows the importance of having our model updated yearly. Model engineers will use this code to refit the model and confirm the appropriateness of features every year. This will help avoid the decrease in performance as years pass. 
+We can see that model accuracy is decreasing as we test model performance on subsequent years' data. The model was built with 2016 data and performs almost as well on 2017 data. On 2018 data, model performance decreases. This shows the importance of having our model updated yearly. Model engineers will use this code to refit the model and confirm the appropriateness of features every year. This will help avoid the decrease in performance as years pass. 
 
 ```{r accuracy}
 
@@ -886,11 +895,11 @@ ggplot(data=accuracy, aes(x=as.factor(Year), y=Accuracy)) +
 
 # Conclusion
 
-This analysis shows how a machine learning model can be used to predict whether restaurants will pass or fail their next health inspection based on restaurant characteristics, spatial features, and weather. This prediction can then be deployed in an App or API to help inform the public about which restaurants may pose risks to their health. This analysis proves this kind of model performs fairly well and shows the utility of a machine learning model in this use case. 
+This analysis shows how a machine learning model can be used to predict whether restaurants will pass or fail their next health inspection based on restaurant characteristics, spatial features, and weather. This prediction can then be deployed in an App to help inform the public about which restaurants may pose risks to their health. The analysis proves this kind of model performs fairly well and shows the utility of a machine learning model in this use case. 
 
-It is important to note the limitations of this analysis. We have built a model that classifies a restaurant into two classes "pass" or "fail"; There is no middle ground (or risk score) in this analysis. This has implications, especially for those restaurants that the model predicts "fail" for. These restaurants are flagged in the app, thus likely deterring the public from eating at their restaurant. Our model is not perfect, and our results showed our model still had some False Positives, so backlash from some restaurants could be expected post deployment. On the other hand, the health of the public is also important, and the wrong prediction could lead to sick Chicagoans. Our model also still had some False negatives, so it is possible to classify a restaurant as safe when it is not. Knowing these risks to the public and businesses, future analyses could incorporate a risk score instead of a classification. Further, our model has room to improve when it comes to sensitivity (the rate at which the model predicts a restaurant will fail and it does). To make this analysis better, we recommend more feature engineering that better explains in variance between a failing restaurant and a passing restaurant. Further, we imagine failures to vary by the inspector doing the inspection. We believe that having the data on the inspector assigned could improve our model. 
+It is important to note the limitations of this analysis. We have built a model that classifies a restaurant into two classes "pass" or "fail" - there is no middle ground (or risk score) in this analysis. This has implications, especially for those restaurants that the model predicts "fail" for. These restaurants are flagged in the app, thus likely deterring the public from eating at their restaurant. A false positive (where we predict fail but the restaurant actually passes) is very harmful to a restaurant's business - and we want to limit that. Our model is not perfect, and our results showed our model still had some False Positives, so backlash from some restaurants could be expected post deployment. On the other hand, the health of the public is also important, and the wrong prediction could lead to sick Chicagoans - thus our priority is to limit false negatives. Our model also still had some False negatives, so it is possible to classify a restaurant as safe when it is not. Knowing these risks to the public and businesses, future analyses could incorporate a risk score instead of a fail/ pass classification. Further, our model has room to improve when it comes to sensitivity (the rate at which the model predicts a restaurant will fail and it does). To make this analysis better, we recommend more feature engineering that better explains the variance between a failing restaurant and a passing restaurant. Further, we imagine failures to vary by the inspector doing the inspection. We believe that having the data on the inspector assigned could improve our model. 
 
-Despite these limitations, the model developed and analyzed here pretty accurate and generalizes well. The model behind the the EatSafe app will also be reanalyzed and developed each year, which should improve the accuracy of predictions in future years and better protect the public and restaurants. We believe this model can help the public make an informed decision about where they eat, especially during the pandemic! 
+Despite these limitations, the model developed and analyzed here is fairly accurate and generalizes well. The model behind the the EatSafe app will also be re-analyzed and developed each year using updated data, which should improve the accuracy of predictions in future years and better protect the public and restaurants. We believe this model can help the public make an informed decision about where they eat, which is especially important to maintain hygiene standards during the pandemic! 
 
 
 
