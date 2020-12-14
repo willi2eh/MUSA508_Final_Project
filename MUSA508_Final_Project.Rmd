@@ -16,11 +16,11 @@ The predicted inspection score can be incorporated into restaurant reviews on si
 
 For more information on EatSafe, check out this promo video: [INSERT SABRINA VID]
 
-The model developed here utilizes logistic regression, determining the likelihood of failing inspection and allowing us to classify a restaurant as likely to "fail" their next inspection or "pass" their next inspection. This allows for clear messaging in the app and through the API that a restaurant is "sure safe" or that a restaurant is potentially "at risk of failing inspection". 
+The model developed here utilizes logistic regression, determining the likelihood of failing inspection and allowing us to classify a restaurant as likely to "fail" or "pass" their next inspection. This allows for clear messaging in the app and through the API that a restaurant is "sure safe" or that a restaurant is potentially "at risk of failing inspection". 
 
-Data used in this analysis came from the [Chicago Data Portal](https://data.cityofchicago.org/). The inspection data contains inspections of restaurants and other food establishments in Chicago since 2010, with this analysis focusing specifically on restaurants. Inspections are performed by staff from the Chicago Department of Public Health’s Food Protection Program using a standardized procedure. Other open data we utilize include Chicago neighborhoods, 311 requests, and liquor licenses. Other data included in this analysis includes census data from the American Community Survey. We also use weather data using the riem package, which allows us to pull weather data from stations across the world. Common violations for restaurants are due to improper temperature control for food, so the model also incorporates temperature.
+Data used in this analysis came from the [Chicago Data Portal](https://data.cityofchicago.org/). The inspection data contains inspections of restaurants and other food establishments in Chicago since 2010, with this analysis focusing specifically on restaurants. Inspections are performed by staff from the Chicago Department of Public Health’s Food Protection Program using a standardized procedure. Restaurants must be inspected annually, but can be inspected multiple times a year if there are complaints for the need for re-inspections, and all of these inspections are included in the model development. However, restaurants that are out of business or indicated they were not ready at time of inspection are not included in the model. Other open data we utilize include Chicago neighborhoods, 311 requests, and liquor licenses. This allows the model to account for spatial features to identify the risk of failing an inspection. Other data included in this analysis includes census data from the American Community Survey. We also use weather data using the riem package in R, which allows us to pull weather data from stations across the world. Common violations for restaurants are due to improper temperature control for food, so the model also incorporates temperature. Using this data, features are engineered, and those features with the most predictive power are included in the final model for EatSafe.
 
-The model developed here uses spatial features such as neighborhoods and distance to 311 requests to identify the risk of failing an inspection.  Further features about the restaurant and its past inspections are developed. 
+This document will walk through the model setup, feature engineering, exploratory analysis, and model development and performance behind the development of the new app and API, EatSafe. 
 
 # Setup
 
@@ -139,6 +139,12 @@ ChicagoBoundary <- st_read("BoundariesCity.geojson")%>%
    st_transform('ESRI:102271') 
 
 ```
+
+# Feature Engineering
+
+Using the inspection dataset, we create variables for number of violations,  number of past inspections, number of past failed inspections, number of days since inspection, days operating, number of critical violations, and if the restaurant is designated "high risk". We add spatial features like neighborhood, distance to santation and rodent complaints, and distance to liquor licenses. We add features from the census by tract, including percent of white population and median income. We also add weather data like wind speed, precipitation, and temperature. 
+
+We also re-code our outcome variable so that it is binary with only two outcomes, pass(0) or fail(1). We coded those inspections where there was no entry for the inspection but violations existed, as a "fail", but coded inspections where there was no entry but no violations as a "pass". If a restaurant passed with conditions, it was considered a "pass" in this analysis.
 
 ```{r feature_engineering, warning=FALSE}
 
@@ -865,7 +871,7 @@ Accuracy18 <- cm18$overall['Accuracy']
 ```
 ### Comparison
 
-We can see that model accuracy is decreasing as we test model performance on subsequent years' data. The model was built with 2016 data and performs almost as well on 2017 data. On 2018 data, model performance decreases. This shows the importance of having our model updated yearly. Model engineers will use this code to refit the model and confirm the appropriateness of features every year. This will help avoid the decrease in performance as years pass. 
+We can see that model accuracy is decreasing as we test model performance on subsequent years' data. The model was built with 2016 data and performs almost as well on 2017 data. On 2018 data, model performance decreases. This shows the importance of having our model updated yearly. It is also important to note that there was a [change in inspection procedures in July 2018](http://dev.cityofchicago.org/open%20data/data%20portal/2018/06/29/food-violations-changes.html), which further shows the importance of model redevelopment. Model engineers will use this code to refit the model and confirm the appropriateness of features every year. This will help avoid the decrease in performance as years pass. 
 
 ```{r accuracy}
 
