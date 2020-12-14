@@ -612,6 +612,8 @@ inspectionTrain <- inspections16[ trainIndex,]
 inspectionTest  <- inspections16[-trainIndex,]
 ```
 
+First, we look a logistic regression model with all of our features included. 
+
 ```{r reg1_model}
 # Logistic regression model with all of the variables- Kitchen sink model- Reg1
 reg1 <- glm(results_numeric ~ .,
@@ -619,6 +621,7 @@ reg1 <- glm(results_numeric ~ .,
                   family="binomial" (link="logit"))
 summary(reg1)
 ```
+
 In this model, we include the following selected features: high_risk, inspection_type, critical_violations, violations_count, days_operating, Temperature, liquor_nn5, sec_neigh, results_numeric.  
 
 ```{r reg2_model}
