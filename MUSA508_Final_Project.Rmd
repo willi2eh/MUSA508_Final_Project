@@ -1,30 +1,37 @@
 ---
-title: "MUSA508_Final_Project"
+title: "Eat Safe"
+subtitle: "MUSA 508 Final Project"
+author:
+- Liz Williams
+- Sabrina Lee
 output:
   html_document:
+    toc: true
+    toc_float: true
     code_folding: hide
+
 ---
 
 # Introduction
-The analysis presented here is for the development of the machine learning model behind the app **Eat Safe**. Eat Safe is a public health safety app that predicts whether a restaurant will fail its next sanitation inspection by the Department of Public Health in Chicago. Environmental factors and past inspection scores are accounted for in the model, which will be updated annually to reflect updated information. 
+The analysis presented here is for the development of the machine learning model behind the app **Eat Safe**. Eat Safe is a public health safety app that predicts whether a restaurant will fail its next health inspection by the Department of Public Health in Chicago. Environmental factors and past inspection scores are accounted for in the model, which will be updated annually to reflect updated information. 
 
 In 2018, Yelp piloted incorporating previous health inspection scores for restaurants into their app, but this has stirred discontent among restaurant owners. For one, the health inspection score could be outdated (as the last health inspection could have occurred almost 2 years ago). The restaurant could have made corrections to the violation ever since, and an outdated health inspection score can be very harmful to a restaurant's business. Additionally, some restaurant owners felt that a past health inspection score placed an unfair burden on restaurants, as some health code violations such as rodent infestations could be more related to sanitation issues that have been plaguing the neighborhood. 
 
 Eat Safe aims to reduce the spread of foodborne illnesses, while providing objective assessments that protect restaurants' reputations. Instead of showing the past inspection score which could have been from 2 years ago, we provide a forecast of whether a restaurant is likely to pass or fail its next inspection, using the latest updated information.  
 
-The predicted inspection score can be incorporated into restaurant reviews on sites such as Yelp, Google Maps, and food blogs to enhance awareness of the food safety of restaurants.  
-
-For more information on EatSafe, check out this promo video: [INSERT SABRINA VID]
+The predicted inspection score can be incorporated into restaurant reviews on sites such as Yelp, Google Maps, and food blogs to enhance awareness of the food safety of restaurants. For more information on Eat Safe, check out this promo video: https://youtu.be/3b2D764zBpU
 
 The model developed here utilizes logistic regression, determining the likelihood of failing inspection and allowing us to classify a restaurant as likely to "fail" or "pass" their next inspection. This allows for clear messaging in the app and through the API that a restaurant is "sure safe" or that a restaurant is potentially "at risk of failing inspection". 
 
-Data used in this analysis came from the [Chicago Data Portal](https://data.cityofchicago.org/). The inspection data contains inspections of restaurants and other food establishments in Chicago since 2010, with this analysis focusing specifically on restaurants. Inspections are performed by staff from the Chicago Department of Public Health’s Food Protection Program using a standardized procedure. Restaurants must be inspected annually, but can be inspected multiple times a year if there are complaints for the need for re-inspections, and all of these inspections are included in the model development. However, restaurants that are out of business or indicated they were not ready at time of inspection are not included in the model. Other open data we utilize include Chicago neighborhoods, 311 requests, and liquor licenses. This allows the model to account for spatial features to identify the risk of failing an inspection. Other data included in this analysis includes census data from the American Community Survey. We also use weather data using the riem package in R, which allows us to pull weather data from stations across the world. Common violations for restaurants are due to improper temperature control for food, so the model also incorporates temperature. Using this data, features are engineered, and those features with the most predictive power are included in the final model for EatSafe.
+Data used in this analysis came from the [Chicago Data Portal](https://data.cityofchicago.org/). The inspection data contains inspections of restaurants and other food establishments in Chicago since 2010, with this analysis focusing specifically on restaurants. Inspections are performed by staff from the Chicago Department of Public Health’s Food Protection Program using a standardized procedure. Restaurants must be inspected annually but can be inspected multiple times a year if there are complaints or a need for re-inspection, and all of these inspections are included in the model development. However, restaurants that are out of business or indicated they were not ready at time of inspection are not included in the model. Other open data we utilize include Chicago neighborhoods, 311 requests, and liquor licenses. This allows the model to account for spatial features to identify the risk of failing an inspection. Other data included in this analysis includes census data from the American Community Survey. We also use weather data using the riem package in R, which allows us to pull weather data from stations across the world. Common violations for restaurants are due to improper temperature control for food, so the model also incorporates temperature. Using this data, features are engineered, and those features with the most predictive power are included in the final model for Eat Safe.
 
-This document will walk through the model setup, feature engineering, exploratory analysis, and model development and performance behind the development of the new app and API, EatSafe. 
+This document will walk through the model setup, feature engineering, exploratory analysis, and model development and performance behind the new app and API, Eat Safe. 
 
 # Setup
 
-```{r setup_13, cache=TRUE, message=FALSE}
+First, we load R packages, functions, and the inspection data. 
+
+```{r setup_13, include=FALSE}
 library(tidyverse)
 library(sf)
 library(lubridate)
@@ -111,11 +118,11 @@ q5 <- function(variable) {as.factor(ntile(variable, 5))}
 ```
 
 ```{r load_api_key, message = FALSE}
-# Load API key
+library(tidycensus)
 census_api_key("d8b938a81d19a2811d021f339295fbf6135f7d36", overwrite = TRUE)
 ```
 
-```{r load_data}
+```{r load_data, message=FALSE, warning=FALSE, results=FALSE}
 # Read in the data with RSocrata package
 inspections <- read.socrata(
   "https://data.cityofchicago.org/resource/4ijn-s7e5.json",
@@ -228,20 +235,8 @@ inspections <- inspections %>%
 
 ```
 
-```{r use_nn_function}
+```{r use_nn_function, message=FALSE, warning=FALSE}
 # Pull in 311 Requests
-
-#sanitation <- read.socrata(
- # "https://data.cityofchicago.org/resource/me59-5fac.json",
-  #app_token = "soPSENlY4ttB95Y2PJMQLdLQL",
-  #email     = "willi2eh@upenn.edu",
-  #password  = "Triscuit3!"
-#)
-# Convert to sf object & filter for 2016
-#sanitation <- st_as_sf(sanitation, coords = c("latitude", "longitude"), 
- #                crs = 4326, agr = "constant", na.fail=FALSE) %>%
-#  dplyr::filter((creation_date > as.POSIXct("2016-01-01")) & (creation_date < as.POSIXct("2017-01-01"))) %>%
- # st_transform(st_crs(inspections))
 
 sanitation <-
   read.socrata("https://data.cityofchicago.org/Service-Requests/311-Service-Requests-Sanitation-Code-Complaints-Hi/me59-5fac") %>%
@@ -430,7 +425,7 @@ inspections17 <- inspections17 %>%
 
 ```
 
-```{r import_weather_17, message = FALSE, warning = FALSE, cache = TRUE}
+```{r import_weather_18, message = FALSE, warning = FALSE, cache = TRUE}
 # Get 2018 weather data
 weather.Panel <- 
   riem_measures(station = "ORD", date_start = "2018-01-01", date_end = "2018-12-31") %>%
@@ -455,8 +450,7 @@ inspections18 <- inspections18 %>%
 
 First, we created some graphs of the model features and outcome variable. 
 
-The risk category of each facility refers to how the establishment is categorized for its risk of adversely affecting the public's health, with 1 being the highest and 3 the lowest. The frequency of inspection is tied to this risk, with risk 1 establishments inspected most frequently and risk 3 least frequently. It can be seen that those restaurants in the "Risk 1 (High)" category are most likely to fail the inspection.
-
+The risk category of each facility refers to how the establishment is categorized for its risk of adversely affecting the public's health, with 1 being the highest and 3 the lowest (these are establishments that only have pre-packaged food items). It can be seen that those restaurants in the "Risk 1 (High)" category are most likely to fail the inspection.
 
 ```{r risk_graph}
 # Create a graph that looks at the categorical feature "risk"
@@ -476,7 +470,8 @@ inspections16 %>%
 
 
 ```
-As seen in Figure x and x, restaurants that fail inspection seem to have fewer past inspections and past failed inspections, more critical violations and number of violations overall, and more days since last inspection on average. Restaurants that fail inspection seem to have similar averages to the restaurants that pass inspection for temperature, days the restaurant has been operating, and median income and percent white of census tracts the restaurant is in. 
+
+As seen below, restaurants that fail inspection seem to have fewer past inspections and past failed inspections, more critical violations and number of violations overall, and more days since last inspection on average. Restaurants that fail inspection seem to have slightly higher temperatures on the day they fail, lower proportion of white people in their census tract, and a slightly lower income context. 
 
 ```{r continuous_graphs_1, message=FALSE, warning=FALSE}
 # Check out differences in pass/fail for some of the continuous variables
@@ -510,7 +505,7 @@ inspections16 %>%
       theme(legend.position = "none")
 ```
 
-Next we look at those restaurants that failed inspection across Chicago in 2016 (Figure ). It can be seen from Figure x and x that the majority of failed inspections occurred in the north east part of the city. The neighborhoods that had the most restaurants failing inspection were Lake View, Wicker Park/ West Town, and the Loop (Figure x). 
+Next we look at those restaurants that failed inspection across Chicago in 2016. It can be seen that the majority of failed inspections occurred in downtown and the northeast part of the city. The neighborhoods that had the most restaurants failing inspection were Lake View, Wicker Park/ West Town, and the Loop.
 
 ```{r failure_2016}
 
@@ -539,7 +534,7 @@ ggplot(chicagoNeighborhoods) +
   mapTheme()
 ```
 
-```{r 2016_inspections_by_neighborhood}
+```{r 2016_inspections_by_neighborhood, message=FALSE, warning=FALSE}
 # bar plot of neighborhoods with the most failures (over 50)
 inspections16_fail %>%
   st_drop_geometry() %>%
@@ -556,7 +551,7 @@ inspections16_fail %>%
 
 ```
 
-Further, when we pull in census tract level data, we can see that the northeast part of the city where the most inspections occur is also home to Chicago's lower income census tracts (Figure x). 
+Further, when we pull in census tract level data, we can see that the northeast part of the city where the most inspections occur is also home to Chicago's lower income census tracts.
 
 ```{r med_income_failure_2016}
 # fixes projection issue
@@ -576,7 +571,7 @@ ggplot(selection) +
 
 ```
 
-Looking at the yearly weather trends (Figure x), we can see that wind speeds vary, but precipitation and temperature increase in spring and summer. As shown in Figure x, the likelihood of failing an inspection increases with higher temperatures. 
+Looking at the yearly weather trends, we can see that wind speeds vary, but precipitation and temperature increase in spring and summer. As shown abover, the likelihood of failing an inspection increases slightly with higher temperatures. 
 
 ```{r plot_weather, catche = TRUE}
 grid.arrange(
@@ -589,7 +584,7 @@ grid.arrange(
   top="Weather Data - Chicago ORD - 2016")
 ```
 
-The number of inspections done each week seems to vary randomly across the year but hover around 200 inspections a week (Figure x). 
+The number of inspections done each week seems to vary randomly across the year and hovers around 200 inspections a week. 
 
 ```{r inpsection_plot, cache = TRUE}
 
@@ -607,7 +602,9 @@ ggplot(inspections16 %>%
 
 # Logistic Regression Model
 
-The model developed here utilizes logistic regression, determining the likelihood of failing inspection and allowing us to classify a restaurant as likely to "fail" their next inspection or "pass" their next inspection. 
+Next, we build the model. The model developed here utilizes logistic regression, determining the likelihood of failing inspection and allowing us to classify a restaurant as likely to "fail" their next inspection or "pass" their next inspection. 
+
+We split our data into a train and test set, and, first, we look a logistic regression model with all of our features included. 
 
 ```{r warning=FALSE}
 # Train/test split
@@ -618,8 +615,6 @@ inspectionTrain <- inspections16[ trainIndex,]
 inspectionTest  <- inspections16[-trainIndex,]
 ```
 
-First, we look a logistic regression model with all of our features included. 
-
 ```{r reg1_model}
 # Logistic regression model with all of the variables- Kitchen sink model- Reg1
 reg1 <- glm(results_numeric ~ .,
@@ -628,7 +623,7 @@ reg1 <- glm(results_numeric ~ .,
 summary(reg1)
 ```
 
-In this model, we include the following selected features: high_risk, inspection_type, critical_violations, violations_count, days_operating, Temperature, liquor_nn5, sec_neigh, results_numeric.  
+Next, we create a better fitting model with fewer, more significant features. In this model, we include the following selected features: high_risk, inspection_type, critical_violations, violations_count, days_operating, Temperature, liquor_nn5, sec_neigh, results_numeric.  
 
 ```{r reg2_model}
 # Logistic regression model with selected variables - Reg2
@@ -641,7 +636,7 @@ summary(reg2)
 
 # Model Performance 
 
-A confusion matrix is produced to show the goodness of fit of the model. A positive parameter is specified to let the function know that a value of 1 designates failing inspection. Our sensitivity (trust positive rate) is 0.72, which greatly improved after our feature engineering. Our specificity (true negative rate) is high at 0.87. Accuracy is also high at 0.8369. An optimal threshold of 0.29 was used to produce this confusion matrix (see below for analysis).
+A confusion matrix is produced to show the goodness of fit of the model. A positive parameter is specified to let the function know that a value of 1 designates failing inspection. Our sensitivity (true positive rate) is 0.72, which greatly improved after our feature engineering. Our specificity (true negative rate) is high at 0.87. Accuracy is also high at 0.84. An optimal threshold of 0.29 was used to produce this confusion matrix (see below for development of this optimal threshold).
 
 ```{r model_metrics}
 # Reg 2 model metrics
@@ -658,6 +653,8 @@ cm16 <- confusionMatrix(testProbs$predOutcome, testProbs$Outcome,
 
 Accuracy16 <- cm16$overall['Accuracy']
 ```
+
+We create a table to show the confusion matrix results.  
 
 ```{r}
 cost_benefit_table <-
@@ -711,7 +708,7 @@ cvFit.reg2 <- train(results_numeric ~ ., data = inspections16 %>% st_drop_geomet
 cvFit.reg2
 ```
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 # Model metrics - Reg2
 dplyr::select(cvFit.reg2$resample, -Resample) %>%
   gather(metric, value) %>%
@@ -728,7 +725,7 @@ dplyr::select(cvFit.reg2$resample, -Resample) %>%
 
 ## Optimal Threshold
 
-In this section, a function is created to iteratively loop through each threshold and calculate confusion metrics for each. The results are then examined by threshold to optimize. We find that the threshold of xxxx limits the false negatives (those we predict to pass but fail) and false positives (those we predict to fail but pass). We want to limit false negatives because incorrectly labeling a failed inspection as a pass means that customers using the app may be vulnerable to food borne illnesses at a restaurant they choose to go to. We want to limit false positives because it can be hurtful for businesses for their restaurants to be flagged when really they would pass inspection. We also want a threshold that keeps accuracy high. It looks like the optimal threshold for this model is 0.29, which minimizes True Postives and True Negative while keeping Accuracy high. 
+In this section, a function is created to iteratively loop through each threshold and calculate confusion metrics for each. The results are then examined by threshold to optimize. We find that the threshold of 0.29 limits the false negatives (those we predict to pass but fail) and false positives (those we predict to fail but pass). We want to limit false negatives because incorrectly labeling a failed inspection as a pass means that customers using the app may be vulnerable to food borne illnesses at a restaurant they choose to go to. We want to limit false positives because it can be hurtful for businesses for their restaurants to be flagged when really they would pass inspection. We also want a threshold that keeps accuracy high. It looks like the threshold 0.29 does the best job at acheiving these goals and will be our optimal threshold.
 
 ```{r}
 iterateThresholds <- function(data, observedClass, predictedProbs, group) {
@@ -804,6 +801,8 @@ whichThreshold <- as.data.frame(whichThreshold)
 ## Model Performance on Next Year's Data 
 ### 2017
 
+Next, we look at how our model built on 2016 data performs on the next year's data. We find the model still performs well, with only a small decrease in accuracy and some decreased sensitivity but increased specificity. 
+
 ```{r model_metrics_17}
 # In the 2017 inspection data, the KENWOOD,OAKLAND neighborhood has two entries that are instead "OAKLAND,KENWOOD", so I fix those
 inspections17$sec_neigh[inspections17$sec_neigh == "OAKLAND,KENWOOD"] <- "KENWOOD,OAKLAND"
@@ -823,14 +822,14 @@ cm17 <- confusionMatrix(testProbs17$predOutcome, testProbs17$Outcome,
 Accuracy17 <- cm17$overall['Accuracy']
 ```
 
-Looking at the predictions we got incorrect in 2017, we can see they are fairly evenly distributed across space, with the bulk appearing in downtown and the north east part of the city (where we see the most inspections and failed inspections). 
+Looking at the predictions we got incorrect in 2017 (incorrect prediction = 1), we can see they are fairly evenly distributed across space, with the bulk appearing in downtown and the northeast part of the city (where we see the most inspections and failed inspections). 
 
 ```{r}
 # Map of predictions
-inspections17 <- inspections17 %>% 
-  dplyr::mutate(Prob = predict(reg2, inspections17, type= "response")) %>%
-  dplyr::mutate(predictedOutcome  = as.factor(ifelse(inspections17$Prob > 0.29 , 1, 0))) %>%
-  dplyr::mutate(incorrect_prediction = ifelse((results_numeric==1 & predictedOutcome==0), 1, ifelse((results_numeric==0 & predictedOutcome==1), 1, 0)))
+#inspections17 <- inspections17 %>% 
+ # dplyr::mutate(Prob = predict(reg2, inspections17, type= "response")) %>%
+#  dplyr::mutate(predictedOutcome  = as.factor(ifelse(inspections17$Prob > 0.29 , 1, 0))) %>%
+ # dplyr::mutate(incorrect_prediction = ifelse((results_numeric==1 & predictedOutcome==0), 1, ifelse((results_numeric==0 & predictedOutcome==1), 1, 0)))
 
 #mutate giving me issues so 
 inspections17$Prob <- predict(reg2, inspections17, type= "response")
@@ -850,6 +849,8 @@ ggplot() +
 ```
 
 ### 2018
+
+Next, we look at how our model built on 2016 data performs on 2018 data. The performance of the model is decreasing. 
 
 ```{r model_metrics_18}
 # In the 2018 inspection data, the KENWOOD,OAKLAND neighborhood has two entries that are instead "OAKLAND,KENWOOD", so I fix those
@@ -906,151 +907,8 @@ ggplot(data=accuracy, aes(x=as.factor(Year), y=Accuracy)) +
 
 This analysis shows how a machine learning model can be used to predict whether restaurants will pass or fail their next health inspection based on restaurant characteristics, spatial features, and weather. This prediction can then be deployed in an App to help inform the public about which restaurants may pose risks to their health. The analysis proves this kind of model performs fairly well and shows the utility of a machine learning model in this use case. 
 
-It is important to note the limitations of this analysis. We have built a model that classifies a restaurant into two classes "pass" or "fail" - there is no middle ground (or risk score) in this analysis. This has implications, especially for those restaurants that the model predicts "fail" for. These restaurants are flagged in the app, thus likely deterring the public from eating at their restaurant. A false positive (where we predict fail but the restaurant actually passes) is very harmful to a restaurant's business - and we want to limit that. Our model is not perfect, and our results showed our model still had some False Positives, so backlash from some restaurants could be expected post deployment. On the other hand, the health of the public is also important, and the wrong prediction could lead to sick Chicagoans - thus our priority is to limit false negatives. Our model also still had some False negatives, so it is possible to classify a restaurant as safe when it is not. Knowing these risks to the public and businesses, future analyses could incorporate a risk score instead of a fail/ pass classification. Further, our model has room to improve when it comes to sensitivity (the rate at which the model predicts a restaurant will fail and it does). To make this analysis better, we recommend more feature engineering that better explains the variance between a failing restaurant and a passing restaurant. Further, we imagine failures to vary by the inspector doing the inspection. We believe that having the data on the inspector assigned could improve our model. 
+It is important to note the limitations of this analysis. We have built a model that classifies a restaurant into two classes "pass" or "fail". There is no middle ground (or risk score) in this analysis. This has implications, especially for those restaurants that the model predicts "fail" for. These restaurants are flagged in the app, thus likely deterring the public from eating at their restaurant. A false positive (where we predict fail but the restaurant actually passes) is very harmful to a restaurant's business, and we want to limit that. Our model is not perfect, and our results showed our model still had some False Positives, so backlash from some restaurants could be expected post deployment. On the other hand, the health of the public is also important, and the wrong prediction could lead to sick Chicagoans - thus our priority is to limit false negatives. Our model also still had some False Negatives, so it is possible to classify a restaurant as safe when it is not. Knowing these risks to the public and businesses, future analyses could incorporate a risk score instead of a fail/ pass classification. Further, our model has room to improve when it comes to sensitivity (the rate at which the model predicts a restaurant will fail and it does). To make this analysis better, we recommend more feature engineering that better explains the variance between a failing restaurant and a passing restaurant. Further, we imagine failures to vary by the inspector doing the inspection. We believe that having the data on the inspector assigned could improve our model. 
 
-Despite these limitations, the model developed and analyzed here is fairly accurate and generalizes well. The model behind the the EatSafe app will also be re-analyzed and developed each year using updated data, which should improve the accuracy of predictions in future years and better protect the public and restaurants. We believe this model can help the public make an informed decision about where they eat, which is especially important to maintain hygiene standards during the pandemic! 
-
-
+Despite these limitations, the model developed and analyzed here is fairly accurate and generalizes well. The model behind the the Eat Safe app will also be reanalyzed and developed each year using updated data, which should improve the accuracy of predictions in future years and better protect the public and restaurants. We believe this model can help the public make an informed decision about where they eat, which is especially important to maintain hygiene standards during the pandemic! 
 
 
-
-
-
-
-
-
-
-
-
-
-
-OLD CODE: 
-
-```{r}
-reg.vars <- c("rodents_nn5", "sanitation_nn5", "violations_count", "risk")
-
-inspections16 <- inspections16 %>%
-  mutate(cvID = sample(round(nrow(inspections16) / 120), size=nrow(inspections16), replace = TRUE))
-
-crossValidate <- function(dataset, id, dependentVariable, indVariables) {
-
-allPredictions <- data.frame()
-cvID_list <- unique(dataset[[id]])
-
-for (i in cvID_list) {
-
-  thisFold <- i
-  cat("This hold out fold is", thisFold, "\n")
-
-  fold.train <- filter(dataset, dataset[[id]] != thisFold) %>% as.data.frame() %>% 
-                dplyr::select(id, geometry, indVariables, dependentVariable)
-  fold.test  <- filter(dataset, dataset[[id]] == thisFold) %>% as.data.frame() %>% 
-                dplyr::select(id, geometry, indVariables, dependentVariable)
-  
-  regression <-
-    glm(results_numeric ~ ., family = "binomial" (link="logit"), 
-      data = fold.train %>% 
-      dplyr::select(-geometry, -id))
-  
-  thisPrediction <- 
-    mutate(fold.test, Prediction = predict(regression, fold.test, type = "response"))
-    
-  allPredictions <-
-    rbind(allPredictions, thisPrediction)
-    
-  }
-  return(st_sf(allPredictions))
-}
-```
-
-```{r message=FALSE, warning=FALSE}
-reg.cv <- crossValidate(
-  dataset = inspections16,
-  id = "cvID",
-  dependentVariable = "results_numeric",
-  indVariables = reg.vars) %>%
-    dplyr::select(cvID = cvID, inspections16, Prediction, geometry)
-
-```
-
-
-# inspectionCount
-# Create feature for # of previous inspections
-#inspections <- inspections %>%
- # arrange(inspection_date) %>%
-  # group_by(dba_name) %>%
-   #mutate(inspectionCount = row_number() - 1L) %>%
-   #ungroup()
-   
-```{r get_census, message=FALSE, warning=FALSE, cache=TRUE, results = 'hide'}
-## don't think we need this but will leave here for now
-chicagoCensus <- 
-  get_acs(geography = "tract", 
-          variables = c("B01003_001", "B19013_001", 
-                        "B02001_002", "B08013_001",
-                        "B08012_001", "B08301_001", 
-                        "B08301_010", "B01002_001"), 
-          year = 2017, 
-          state = "IL", 
-          geometry = TRUE, 
-          county=c("Cook"),
-          output = "wide") %>%
-  rename(Total_Pop =  B01003_001E,
-         Med_Inc = B19013_001E,
-         Med_Age = B01002_001E,
-         White_Pop = B02001_002E,
-         Travel_Time = B08013_001E,
-         Num_Commuters = B08012_001E,
-         Means_of_Transport = B08301_001E,
-         Total_Public_Trans = B08301_010E) %>%
-  select(Total_Pop, Med_Inc, White_Pop, Travel_Time,
-         Means_of_Transport, Total_Public_Trans,
-         Med_Age,
-         GEOID, geometry) %>%
-  mutate(Percent_White = White_Pop / Total_Pop,
-         Mean_Commute_Time = Travel_Time / Total_Public_Trans,
-         Percent_Taking_Public_Trans = Total_Public_Trans / Means_of_Transport)
-
-```
-
-
-
-```{r extract_geometries, cache = TRUE}
-chicagoTracts <- 
-  chicagoCensus %>%
-  as.data.frame() %>%
-  distinct(GEOID, .keep_all = TRUE) %>%
-  select(GEOID, geometry) %>% 
-  st_sf 
-
-inspections16 <- inspections16 %>% st_transform(4326) 
-
-```
-
-```{r add_census_tracts, cache = TRUE, message = FALSE, warning = FALSE}
-# this creates a new data frame with inspections and census data - not an sf object
-dat_census <- st_join(inspections16 %>% 
-          filter(is.na(location.latitude) == FALSE &
-                   is.na(location.longitude) == FALSE) %>%
-          st_as_sf(., coords = c("location.longitude", "location.latitude"), crs = 4326),
-        chicagoTracts %>%
-          st_transform(crs=4326),
-        join=st_intersects,
-              left = TRUE) %>%
-  rename(Origin.Tract = GEOID) %>%
-  mutate(location.longitude = unlist(map(geometry, 1)),
-         location.latitude = unlist(map(geometry, 2)))%>%
-  as.data.frame() %>%
-  select(-geometry)
- 
-```
-
-```{r}
-inspections16 %>%
-  st_drop_geometry() %>%
-  ggplot(aes(x=days_operating, y=past_failed_inspect)) +
-   geom_point(size=.4) +
-    geom_smooth(method=lm)
-  
-  
-```
